@@ -27,8 +27,8 @@ async function getBlockStats(api: ApiPromise, hash?: BlockHash | undefined): Pro
 
 async function run() {
 
-    let TOTAL_TRANSACTIONS = 15000;
-    let TPS = 1500;
+    let TOTAL_TRANSACTIONS = 18000;
+    let TPS = 1200;
     let TOTAL_THREADS = 10;
     let TRANSACTIONS_PER_THREAD = TOTAL_TRANSACTIONS/TOTAL_THREADS;
     let TOTAL_BATCHES = TOTAL_TRANSACTIONS/TPS;
