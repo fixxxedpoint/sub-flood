@@ -152,11 +152,15 @@ async function run() {
                         let transaction = thread_payloads[threadNo][batchNo][transactionNo];
                         resolve(await transaction.send(({ status }) => {
                             if (status.isFinalized) {
-                                Atomics.add(finalisedTxs, 0, 1);
                                 let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
-                                if (finalisationTimeCurrent > Atomics.load(finalisationTime, 0)) {
-                                    Atomics.store(finalisationTime, 0, finalisationTimeCurrent);
+                                let stored = Atomics.load(finalisationTime, 0);
+                                while (finalisationTimeCurrent > stored) {
+                                    if (stored == Atomics.compareExchange(finalisationTime, 0, stored, finalisationTime)) {
+                                        break;
+                                    }
+                                    stored = Atomics.load(finalisationTime, 0);
                                 }
+                                Atomics.add(finalisedTxs, 0, 1);
                             }
                         }).catch((err: any) => {
                             errors.push(err);
