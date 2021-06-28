@@ -90,7 +90,6 @@ async function run() {
             `Alice -> ${receiverSeed} (${keypair.address}) ${initialBalance}`
         );
         await transfer.signAndSend(aliceKeyPair, { nonce: aliceNonce }, ({ status }) => {
-            console.log(`transaction's status: ${status}`);
             if (status.isFinalized) {
                 finalized_transactions++;
             }
@@ -137,9 +136,9 @@ async function run() {
         console.log(`Done pregenerating transactions (${sanityCounter}).`);
 
         // wait for the previous batch before you start a new one
-        console.log("Awaiting previous batches to finish...");
+        console.log("Awaiting previous batch to finish...");
         await submit_promise;
-        console.log("Previous batches finished");
+        console.log("Previous batch finished");
 
         submit_promise = new Promise(async resolve => {
             let nextTime = new Date().getTime();
@@ -167,7 +166,6 @@ async function run() {
                             new Promise<number>(async resolve => {
                                 let transaction = thread_payloads[threadNo][batchNo][transactionNo];
                                 resolve(await transaction.send(({ status }) => {
-                                    console.log(`batch transaction's status: ${status}`);
                                     if (status.isFinalized) {
                                         let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
                                         while (true) {
