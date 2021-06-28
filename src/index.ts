@@ -27,7 +27,7 @@ async function getBlockStats(api: ApiPromise, hash?: BlockHash | undefined): Pro
 }
 
 async function run() {
-    var argv = require('minimist')(process.argv.slice(2));
+    let argv = require('minimist')(process.argv.slice(2));
 
     let TOTAL_TRANSACTIONS = argv.total_transactions ? argv.total_transactions : 25000;
     let TPS = argv.scale ? argv.scale : 100;
@@ -73,25 +73,21 @@ async function run() {
 
     let finalized_transactions = 0;
 
-    // const aliceFunds = await api.query.balances.account(aliceKeyPair.address);
     const aliceFunds = (await api.query.system.account(aliceKeyPair.address)).data.free;
-    const allFromAlice = aliceFunds.toNumber() - api.consts.balances.existentialDeposit.toNumber();
-    const keypair = keyring.addFromUri(seedFromNum(TOTAL_USERS));
-    const partialFeeUpperBound = (await api.tx.balances.transfer(keypair.address, allFromAlice).paymentInfo(aliceKeyPair)).partialFee.toNumber();
-    const initialBalance = allFromAlice / TOTAL_USERS - partialFeeUpperBound;
+    console.log(`Alice's funds: ${aliceFunds.toBigInt()}`);
+    const allAvailableAliceFunds = aliceFunds.toBigInt() - api.consts.balances.existentialDeposit.toBigInt();
+    const partialFeeUpperBound = (await api.tx.balances.transfer(aliceKeyPair.address, allAvailableAliceFunds).paymentInfo(aliceKeyPair)).partialFee.toBigInt();
+    const initialBalance = (allAvailableAliceFunds / BigInt(TOTAL_USERS)) - partialFeeUpperBound;
 
-    for (let seed = 0; seed < TOTAL_USERS; seed++) {
+    for (let seed = 0; seed <= TOTAL_USERS; seed++) {
         let keypair = keyring.addFromUri(seedFromNum(seed));
         keyPairs.set(seed, keypair);
 
-        // should be greater than existential deposit.
-        // let feesMultiplier = 1000000;
-        // let initialBalance = 10 * api.consts.balances.existentialDeposit.toNumber() + feesMultiplier * 1024 * api.consts.transactionPayment.transactionByteFee.toNumber();
         let transfer = api.tx.balances.transfer(keypair.address, initialBalance);
 
         let receiverSeed = seedFromNum(seed);
         console.log(
-            `Alice -> ${receiverSeed} (${keypair.address}) $${initialBalance}`
+            `Alice -> ${receiverSeed} (${keypair.address}) ${initialBalance}`
         );
         await transfer.signAndSend(aliceKeyPair, { nonce: aliceNonce }, ({ status }) => {
             console.log(`transaction's status: ${status}`);
@@ -116,13 +112,13 @@ async function run() {
     while (true) {
 
         console.log(`Pregenerating ${TOTAL_TRANSACTIONS} transactions across ${TOTAL_THREADS} threads...`);
-        var thread_payloads: any[][][] = [];
-        var sanityCounter = 0;
+        let thread_payloads: any[][][] = [];
+        let sanityCounter = 0;
         for (let thread = 0; thread < TOTAL_THREADS; thread++) {
             let batches = [];
-            for (var batchNo = 0; batchNo < TOTAL_BATCHES; batchNo++) {
+            for (let batchNo = 0; batchNo < TOTAL_BATCHES; batchNo++) {
                 let batch = [];
-                for (var userNo = thread * USERS_PER_THREAD; userNo < (thread + 1) * USERS_PER_THREAD; userNo++) {
+                for (let userNo = thread * USERS_PER_THREAD; userNo < (thread + 1) * USERS_PER_THREAD; userNo++) {
                     let nonce = nonces[userNo];
                     nonces[userNo]++;
                     let senderKeyPair = keyPairs.get(userNo)!;
@@ -141,9 +137,11 @@ async function run() {
         console.log(`Done pregenerating transactions (${sanityCounter}).`);
 
         // wait for the previous batch before you start a new one
+        console.log("Awaiting previous batches to finish...");
         await submit_promise;
+        console.log("Previous batches finished");
 
-        submit_promise = new Promise(async _ => {
+        submit_promise = new Promise(async resolve => {
             let nextTime = new Date().getTime();
             let initialTime = new Date();
             const finalisationTime = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
@@ -151,7 +149,7 @@ async function run() {
             const finalisedTxs = new Uint16Array(new SharedArrayBuffer(Uint16Array.BYTES_PER_ELEMENT));
             finalisedTxs[0] = 0;
 
-            for (var batchNo = 0; batchNo < TOTAL_BATCHES; batchNo++) {
+            for (let batchNo = 0; batchNo < TOTAL_BATCHES; batchNo++) {
 
                 while (new Date().getTime() < nextTime) {
                     await new Promise(r => setTimeout(r, 5));
@@ -159,7 +157,7 @@ async function run() {
 
                 nextTime = nextTime + 1000;
 
-                var errors = [];
+                let errors = [];
 
                 console.log(`Starting batch #${batchNo}`);
                 let batchPromises = new Array<Promise<number>>();
@@ -201,9 +199,9 @@ async function run() {
             let finalTime = new Date();
             let diff = finalTime.getTime() - initialTime.getTime();
 
-            var total_transactions = 0;
-            var total_blocks = 0;
-            var latest_block = await getBlockStats(api);
+            let total_transactions = 0;
+            let total_blocks = 0;
+            let latest_block = await getBlockStats(api);
             console.log(`latest block: ${latest_block.date}`);
             console.log(`initial time: ${initialTime}`);
             let prunedFlag = false;
@@ -232,6 +230,8 @@ async function run() {
                 let attempt = 0;
                 while (!break_condition) {
                     console.log(`Wait ${FINALISATION_TIMEOUT} ms for transactions finalisation, attempt ${attempt} out of ${FINALISATION_ATTEMPTS}`);
+                    let finalized = Atomics.load(finalisedTxs, 0)
+                    console.log(`Finalized ${finalized} out of ${TOTAL_TRANSACTIONS}`);
                     await new Promise(r => setTimeout(r, FINALISATION_TIMEOUT));
 
                     if (Atomics.load(finalisedTxs, 0) < TOTAL_TRANSACTIONS) {
@@ -248,6 +248,7 @@ async function run() {
                 console.log(`Finalized ${Atomics.load(finalisedTxs, 0)} out of ${TOTAL_TRANSACTIONS} transactions, finalization time was ${Atomics.load(finalisationTime, 0)}`);
             }
 
+            resolve();
         });
 
     }
