@@ -41,6 +41,7 @@ async function run() {
     let MEASURE_FINALISATION = argv.finalization ? argv.finalization : false;
     let FINALISATION_TIMEOUT = argv.finalization_timeout ? argv.finalization_timeout : 20000; // 20 seconds
     let FINALISATION_ATTEMPTS = argv.finalization_attempts ? argv.finalization_attempts : 5;
+    let ONLY_FLOODING = argv.only_flooding ? argv.only_flooding : false;
 
     let provider = new WsProvider(WS_URL);
 
@@ -193,6 +194,9 @@ async function run() {
                     console.log(`${errors.length}/${TRANSACTION_PER_BATCH} errors sending transactions`);
                 }
             }
+            if (ONLY_FLOODING) {
+                return resolve();
+            }
 
             let finalTime = new Date();
             let diff = finalTime.getTime() - initialTime.getTime();
@@ -246,7 +250,7 @@ async function run() {
                 console.log(`Finalized ${Atomics.load(finalisedTxs, 0)} out of ${TOTAL_TRANSACTIONS} transactions, finalization time was ${Atomics.load(finalisationTime, 0)}`);
             }
 
-            resolve();
+            return resolve();
         });
 
     }
