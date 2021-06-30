@@ -1,7 +1,7 @@
 import { Keyring } from "@polkadot/keyring";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { KeyringPair } from "@polkadot/keyring/types";
-import { SignedBlock, BlockHash, BlockAttestations } from "@polkadot/types/interfaces";
+import { BlockHash } from "@polkadot/types/interfaces";
 
 
 function seedFromNum(seed: number): string {
@@ -23,6 +23,168 @@ async function getBlockStats(api: ApiPromise, hash?: BlockHash | undefined): Pro
         transactions: signedBlock.block.extrinsics.length,
         parent: signedBlock.block.header.parentHash,
         blockNumber: signedBlock.block.header.number,
+    }
+}
+
+function createPayloadBuilder(
+    api: ApiPromise,
+    tokensToSend: number,
+    nonces: number[],
+    totalThreads: number,
+    totalBatches: number,
+    usersPerThread: number,
+    keyPairs: Map<number, KeyringPair>,
+    aliceKeyPair: KeyringPair): () => any[][][]
+{
+
+    return function(): any[][][] {
+        let threadPayloads: any[][][] = [];
+        let sanityCounter = 0;
+        for (let thread = 0; thread < totalThreads; thread++) {
+            let batches = [];
+            for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
+                let batch = [];
+                for (let userNo = thread * usersPerThread; userNo < (thread + 1) * usersPerThread; userNo++) {
+                    let nonce = nonces[userNo];
+                    nonces[userNo]++;
+                    let senderKeyPair = keyPairs.get(userNo)!;
+
+                    let transfer = api.tx.balances.transfer(aliceKeyPair.address, tokensToSend);
+                    let signedTransaction = transfer.sign(senderKeyPair, { nonce });
+
+                    batch.push(signedTransaction);
+
+                    sanityCounter++;
+                }
+                batches.push(batch);
+            }
+            threadPayloads.push(batches);
+        }
+        console.log(`Done pregenerating transactions (${sanityCounter}).`);
+        return threadPayloads;
+    };
+}
+
+async function executeBatches(
+    initialTime: Date,
+    threadPayloads: any[][][],
+    totalBatches: number,
+    transactionPerBatch: number,
+    finalisationTime: Uint32Array,
+    finalisedTxs: Uint16Array,
+    measureFinalisation: boolean
+) {
+    let nextTime = new Date().getTime();
+    finalisationTime[0] = 0;
+    finalisedTxs[0] = 0;
+
+    for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
+
+        while (new Date().getTime() < nextTime) {
+            await new Promise(r => setTimeout(r, 5));
+        }
+
+        nextTime = nextTime + 1000;
+
+        let errors = [];
+
+        console.log(`Starting batch #${batchNo}`);
+        let batchPromises = new Array<Promise<number>>();
+        for (let threadNo = 0; threadNo < totalBatches; threadNo++) {
+            for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
+                batchPromises.push(
+                    new Promise<number>(async resolve => {
+                        let transaction = threadPayloads[threadNo][batchNo][transactionNo];
+                        resolve(await transaction.send(({ status }) => {
+                            if (measureFinalisation && status.isFinalized) {
+                                let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
+                                while (true) {
+                                    let stored = Atomics.load(finalisationTime, 0);
+                                    if (finalisationTimeCurrent <= stored) {
+                                        break;
+                                    }
+                                    if (stored == Atomics.compareExchange(finalisationTime, 0, stored, finalisationTimeCurrent)) {
+                                        break;
+                                    }
+                                }
+                                Atomics.add(finalisedTxs, 0, 1);
+                            }
+                        }).catch((err: any) => {
+                            errors.push(err);
+                            return -1;
+                        }));
+                    })
+                );
+            }
+        }
+        await Promise.all(batchPromises);
+
+        if (errors.length > 0) {
+            console.log(`${errors.length}/${transactionPerBatch} errors sending transactions`);
+        }
+    }
+}
+
+async function collectStats(
+    api: ApiPromise,
+    initialTime: Date,
+    measureFinalisation: boolean,
+    finalisationTimeout: number,
+    finalisedTxs: Uint16Array,
+    totalTransactions: number,
+    finalisationAttempts: number,
+    finalisationTime: Uint32Array
+) {
+    let finalTime = new Date();
+    let diff = finalTime.getTime() - initialTime.getTime();
+
+    let total_transactions = 0;
+    let total_blocks = 0;
+    let latest_block = await getBlockStats(api);
+    console.log(`latest block: ${latest_block.date}`);
+    console.log(`initial time: ${initialTime}`);
+    let prunedFlag = false;
+    for (; latest_block.date > initialTime;) {
+        try {
+            latest_block = await getBlockStats(api, latest_block.parent);
+        } catch (err) {
+            console.log("Cannot retrieve block info with error: " + err.toString());
+            console.log("Most probably the state is pruned already, stopping");
+            prunedFlag = true;
+            break;
+        }
+        if (latest_block.date < finalTime) {
+            console.log(`block number ${latest_block.blockNumber}: ${latest_block.transactions} transactions`);
+            total_transactions += latest_block.transactions;
+            total_blocks++;
+        }
+    }
+
+    let tps = (total_transactions * 1000) / diff;
+
+    console.log(`TPS from ${total_blocks} blocks: ${tps}`);
+
+    if (measureFinalisation && !prunedFlag) {
+        let break_condition = false;
+        let attempt = 0;
+        while (!break_condition) {
+            console.log(`Wait ${finalisationTimeout} ms for transactions finalisation, attempt ${attempt} out of ${finalisationAttempts}`);
+            let finalized = Atomics.load(finalisedTxs, 0)
+            console.log(`Finalized ${finalized} out of ${totalTransactions}`);
+            await new Promise(r => setTimeout(r, finalisationTimeout));
+
+            if (Atomics.load(finalisedTxs, 0) < totalTransactions) {
+                if (attempt == finalisationAttempts) {
+                    // time limit reached
+                    break_condition = true;
+                } else {
+                    attempt++;
+                }
+            } else {
+                break_condition = true;
+            }
+        }
+        console.log(`Finalized ${Atomics.load(finalisedTxs, 0)} out of ${totalTransactions} transactions, finalization time was ${Atomics.load(finalisationTime, 0)}`);
     }
 }
 
@@ -58,7 +220,7 @@ async function run() {
     let nonces = [];
 
     console.log("Fetching nonces for accounts...");
-    for (let i = 0; i <= TOTAL_USERS; i++) {
+    for (let i = 0; i < TOTAL_USERS; i++) {
         let stringSeed = seedFromNum(i);
         let keys = keyring.addFromUri(stringSeed);
         let nonce = (await api.query.system.account(keys.address)).nonce.toNumber();
@@ -80,7 +242,7 @@ async function run() {
     const partialFeeUpperBound = (await api.tx.balances.transfer(aliceKeyPair.address, allAvailableAliceFunds).paymentInfo(aliceKeyPair)).partialFee.toBigInt();
     const initialBalance = (allAvailableAliceFunds / BigInt(TOTAL_USERS)) - partialFeeUpperBound;
 
-    for (let seed = 0; seed <= TOTAL_USERS; seed++) {
+    for (let seed = 0; seed < TOTAL_USERS; seed++) {
         let keypair = keyring.addFromUri(seedFromNum(seed));
         keyPairs.set(seed, keypair);
 
@@ -103,153 +265,33 @@ async function run() {
     await new Promise(r => setTimeout(r, FINALISATION_TIMEOUT));
     console.log(`Finalized transactions ${finalized_transactions}`);
 
-    if (finalized_transactions < TOTAL_USERS + 1) {
+    if (finalized_transactions != TOTAL_USERS) {
         throw Error(`Not all transactions finalized`);
     }
 
-    let submit_promise: Promise<void> = new Promise(resolve => resolve());
+    let payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, aliceKeyPair);
+    let submitPromise: Promise<void> = new Promise(resolve => resolve());
 
     while (true) {
 
         console.log(`Pregenerating ${TOTAL_TRANSACTIONS} transactions across ${TOTAL_THREADS} threads...`);
-        let thread_payloads: any[][][] = [];
-        let sanityCounter = 0;
-        for (let thread = 0; thread < TOTAL_THREADS; thread++) {
-            let batches = [];
-            for (let batchNo = 0; batchNo < TOTAL_BATCHES; batchNo++) {
-                let batch = [];
-                for (let userNo = thread * USERS_PER_THREAD; userNo < (thread + 1) * USERS_PER_THREAD; userNo++) {
-                    let nonce = nonces[userNo];
-                    nonces[userNo]++;
-                    let senderKeyPair = keyPairs.get(userNo)!;
-
-                    let transfer = api.tx.balances.transfer(aliceKeyPair.address, TOKENS_TO_SEND);
-                    let signedTransaction = transfer.sign(senderKeyPair, { nonce });
-
-                    batch.push(signedTransaction);
-
-                    sanityCounter++;
-                }
-                batches.push(batch);
-            }
-            thread_payloads.push(batches);
-        }
-        console.log(`Done pregenerating transactions (${sanityCounter}).`);
+        let threadPayloads = payloadBuilder();
 
         // wait for the previous batch before you start a new one
         console.log("Awaiting previous batch to finish...");
-        await submit_promise;
+        await submitPromise;
         console.log("Previous batch finished");
 
-        submit_promise = new Promise(async resolve => {
-            let nextTime = new Date().getTime();
+        submitPromise = new Promise(async resolve => {
             let initialTime = new Date();
             const finalisationTime = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
-            finalisationTime[0] = 0;
             const finalisedTxs = new Uint16Array(new SharedArrayBuffer(Uint16Array.BYTES_PER_ELEMENT));
-            finalisedTxs[0] = 0;
 
-            for (let batchNo = 0; batchNo < TOTAL_BATCHES; batchNo++) {
-
-                while (new Date().getTime() < nextTime) {
-                    await new Promise(r => setTimeout(r, 5));
-                }
-
-                nextTime = nextTime + 1000;
-
-                let errors = [];
-
-                console.log(`Starting batch #${batchNo}`);
-                let batchPromises = new Array<Promise<number>>();
-                for (let threadNo = 0; threadNo < TOTAL_THREADS; threadNo++) {
-                    for (let transactionNo = 0; transactionNo < TRANSACTION_PER_BATCH; transactionNo++) {
-                        batchPromises.push(
-                            new Promise<number>(async resolve => {
-                                let transaction = thread_payloads[threadNo][batchNo][transactionNo];
-                                resolve(await transaction.send(({ status }) => {
-                                    if (status.isFinalized) {
-                                        let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
-                                        while (true) {
-                                            let stored = Atomics.load(finalisationTime, 0);
-                                            if (finalisationTimeCurrent <= stored) {
-                                                break;
-                                            }
-                                            if (stored == Atomics.compareExchange(finalisationTime, 0, stored, finalisationTimeCurrent)) {
-                                                break;
-                                            }
-                                        }
-                                        Atomics.add(finalisedTxs, 0, 1);
-                                    }
-                                }).catch((err: any) => {
-                                    errors.push(err);
-                                    return -1;
-                                }));
-                            })
-                        );
-                    }
-                }
-                await Promise.all(batchPromises);
-
-                if (errors.length > 0) {
-                    console.log(`${errors.length}/${TRANSACTION_PER_BATCH} errors sending transactions`);
-                }
-            }
+            await executeBatches(initialTime, threadPayloads, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALISATION);
             if (ONLY_FLOODING) {
                 return resolve();
             }
-
-            let finalTime = new Date();
-            let diff = finalTime.getTime() - initialTime.getTime();
-
-            let total_transactions = 0;
-            let total_blocks = 0;
-            let latest_block = await getBlockStats(api);
-            console.log(`latest block: ${latest_block.date}`);
-            console.log(`initial time: ${initialTime}`);
-            let prunedFlag = false;
-            for (; latest_block.date > initialTime;) {
-                try {
-                    latest_block = await getBlockStats(api, latest_block.parent);
-                } catch (err) {
-                    console.log("Cannot retrieve block info with error: " + err.toString());
-                    console.log("Most probably the state is pruned already, stopping");
-                    prunedFlag = true;
-                    break;
-                }
-                if (latest_block.date < finalTime) {
-                    console.log(`block number ${latest_block.blockNumber}: ${latest_block.transactions} transactions`);
-                    total_transactions += latest_block.transactions;
-                    total_blocks++;
-                }
-            }
-
-            let tps = (total_transactions * 1000) / diff;
-
-            console.log(`TPS from ${total_blocks} blocks: ${tps}`);
-
-            if (MEASURE_FINALISATION && !prunedFlag) {
-                let break_condition = false;
-                let attempt = 0;
-                while (!break_condition) {
-                    console.log(`Wait ${FINALISATION_TIMEOUT} ms for transactions finalisation, attempt ${attempt} out of ${FINALISATION_ATTEMPTS}`);
-                    let finalized = Atomics.load(finalisedTxs, 0)
-                    console.log(`Finalized ${finalized} out of ${TOTAL_TRANSACTIONS}`);
-                    await new Promise(r => setTimeout(r, FINALISATION_TIMEOUT));
-
-                    if (Atomics.load(finalisedTxs, 0) < TOTAL_TRANSACTIONS) {
-                        if (attempt == FINALISATION_ATTEMPTS) {
-                            // time limit reached
-                            break_condition = true;
-                        } else {
-                            attempt++;
-                        }
-                    } else {
-                        break_condition = true;
-                    }
-                }
-                console.log(`Finalized ${Atomics.load(finalisedTxs, 0)} out of ${TOTAL_TRANSACTIONS} transactions, finalization time was ${Atomics.load(finalisationTime, 0)}`);
-            }
-
+            await collectStats(api, initialTime, MEASURE_FINALISATION, FINALISATION_TIMEOUT, finalisedTxs, TOTAL_TRANSACTIONS, FINALISATION_ATTEMPTS, finalisationTime);
             return resolve();
         });
 

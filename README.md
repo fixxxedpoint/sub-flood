@@ -14,7 +14,7 @@ node dist/index.js
 ```
 
 ## Details of the concept
-Implemented script does the following:
+Implemented script repeats infinitely long the following steps:
 - Derives temporary accounts from Alice account
 - Setups these accounts, transfering existential deposit to them
 - Generates bunch of transactions, transfers from temporary accounts to Alice
@@ -32,3 +32,4 @@ Script may also try to wait for all sent transactions' finalization (see corresp
 - `finalization` - boolean flag, if true, script should wait for all transactions finalization, default is false
 - `finalization_timeout` - amount of time to wait in every attempt, default is 20000 (in ms); screen makes several attempts, so the total waiting time is finalization_timeout * finalization_attempts
 - `finalization_attempts` - amount of waiting attempts, default is 5
+- `only_flooding` - boolean flag, if true, script will not compute overall statistics after submitting transactions but instead immediately attempts to start a new round of flooding
