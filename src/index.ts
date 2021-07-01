@@ -130,9 +130,9 @@ async function collectStats(
     initialTime: Date,
     measureFinalisation: boolean,
     finalisationTimeout: number,
-    finalisedTxs: Uint16Array,
     totalTransactions: number,
     finalisationAttempts: number,
+    finalisedTxs: Uint16Array,
     finalisationTime: Uint32Array
 ) {
     let finalTime = new Date();
@@ -144,7 +144,7 @@ async function collectStats(
     console.log(`latest block: ${latest_block.date}`);
     console.log(`initial time: ${initialTime}`);
     let prunedFlag = false;
-    for (; latest_block.date > initialTime;) {
+    while (latest_block.date > initialTime) {
         try {
             latest_block = await getBlockStats(api, latest_block.parent);
         } catch (err) {
@@ -165,9 +165,8 @@ async function collectStats(
     console.log(`TPS from ${total_blocks} blocks: ${tps}`);
 
     if (measureFinalisation && !prunedFlag) {
-        let break_condition = false;
         let attempt = 0;
-        while (!break_condition) {
+        while (true) {
             console.log(`Wait ${finalisationTimeout} ms for transactions finalisation, attempt ${attempt} out of ${finalisationAttempts}`);
             let finalized = Atomics.load(finalisedTxs, 0)
             console.log(`Finalized ${finalized} out of ${totalTransactions}`);
@@ -176,12 +175,12 @@ async function collectStats(
             if (Atomics.load(finalisedTxs, 0) < totalTransactions) {
                 if (attempt == finalisationAttempts) {
                     // time limit reached
-                    break_condition = true;
+                    break;
                 } else {
                     attempt++;
                 }
             } else {
-                break_condition = true;
+                break;
             }
         }
         console.log(`Finalized ${Atomics.load(finalisedTxs, 0)} out of ${totalTransactions} transactions, finalization time was ${Atomics.load(finalisationTime, 0)}`);
@@ -291,7 +290,7 @@ async function run() {
             if (ONLY_FLOODING) {
                 return resolve();
             }
-            await collectStats(api, initialTime, MEASURE_FINALISATION, FINALISATION_TIMEOUT, finalisedTxs, TOTAL_TRANSACTIONS, FINALISATION_ATTEMPTS, finalisationTime);
+            await collectStats(api, initialTime, MEASURE_FINALISATION, FINALISATION_TIMEOUT, TOTAL_TRANSACTIONS, FINALISATION_ATTEMPTS, finalisedTxs, finalisationTime);
             return resolve();
         });
 
