@@ -34,8 +34,7 @@ function createPayloadBuilder(
     totalBatches: number,
     usersPerThread: number,
     keyPairs: Map<number, KeyringPair>,
-    aliceKeyPair: KeyringPair): () => any[][][]
-{
+    aliceKeyPair: KeyringPair): () => any[][][] {
 
     return function(): any[][][] {
         let threadPayloads: any[][][] = [];
@@ -91,9 +90,9 @@ async function executeBatches(
         console.log(`Starting batch #${batchNo}`);
         let batchPromises = new Array<Promise<number>>();
         for (let threadNo = 0; threadNo < totalBatches; threadNo++) {
-            for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
-                batchPromises.push(
-                    new Promise<number>(async resolve => {
+            batchPromises.push(
+                new Promise<number>(async resolve => {
+                    for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
                         let transaction = threadPayloads[threadNo][batchNo][transactionNo];
                         resolve(await transaction.send(({ status }) => {
                             if (measureFinalisation && status.isFinalized) {
@@ -113,9 +112,9 @@ async function executeBatches(
                             errors.push(err);
                             return -1;
                         }));
-                    })
-                );
-            }
+                    }
+                })
+            );
         }
         await Promise.all(batchPromises);
 
@@ -203,6 +202,7 @@ async function run() {
     let FINALISATION_TIMEOUT = argv.finalization_timeout ? argv.finalization_timeout : 20000; // 20 seconds
     let FINALISATION_ATTEMPTS = argv.finalization_attempts ? argv.finalization_attempts : 5;
     let ONLY_FLOODING = argv.only_flooding ? argv.only_flooding : false;
+    let ROOT_ACCOUNT_URI = argv.root_account_uri ? argv.root_account_uri : "//Alice";
 
     let provider = new WsProvider(WS_URL);
 
@@ -227,8 +227,8 @@ async function run() {
     }
     console.log("All nonces fetched!");
 
-    console.log("Endowing all users from Alice account...");
-    let aliceKeyPair = keyring.addFromUri("//Alice");
+    console.log("Endowing all users from ROOT account...");
+    let aliceKeyPair = keyring.addFromUri(ROOT_ACCOUNT_URI);
     let aliceNonce = (await api.query.system.account(aliceKeyPair.address)).nonce.toNumber();
     let keyPairs = new Map<number, KeyringPair>()
     console.log("Alice nonce is " + aliceNonce);
@@ -236,7 +236,7 @@ async function run() {
     let finalized_transactions = 0;
 
     const aliceFunds = (await api.query.system.account(aliceKeyPair.address)).data.free;
-    console.log(`Alice's funds: ${aliceFunds.toBigInt()}`);
+    console.log(`ROOT's funds: ${aliceFunds.toBigInt()}`);
     const allAvailableAliceFunds = aliceFunds.toBigInt() - api.consts.balances.existentialDeposit.toBigInt();
     const partialFeeUpperBound = (await api.tx.balances.transfer(aliceKeyPair.address, allAvailableAliceFunds).paymentInfo(aliceKeyPair)).partialFee.toBigInt();
     const initialBalance = (allAvailableAliceFunds / BigInt(TOTAL_USERS)) - partialFeeUpperBound;
