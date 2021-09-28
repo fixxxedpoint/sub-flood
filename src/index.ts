@@ -67,6 +67,7 @@ function createPayloadBuilder(
 async function executeBatches(
     initialTime: Date,
     threadPayloads: any[][][],
+    totalThreads: number,
     totalBatches: number,
     transactionPerBatch: number,
     finalisationTime: Uint32Array,
@@ -89,12 +90,13 @@ async function executeBatches(
 
         console.log(`Starting batch #${batchNo}`);
         let batchPromises = new Array<Promise<number>>();
-        for (let threadNo = 0; threadNo < totalBatches; threadNo++) {
+        for (let threadNo = 0; threadNo < totalThreads; threadNo++) {
             batchPromises.push(
                 new Promise<number>(async resolve => {
+                    let result = 0;
                     for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
                         let transaction = threadPayloads[threadNo][batchNo][transactionNo];
-                        resolve(await transaction.send(({ status }) => {
+                        await transaction.send(({ status }) => {
                             if (measureFinalisation && status.isFinalized) {
                                 let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
                                 while (true) {
@@ -110,8 +112,15 @@ async function executeBatches(
                             }
                         }).catch((err: any) => {
                             errors.push(err);
+                            result = -1;
                             return -1;
-                        }));
+                        });
+                        console.log(`transaction sent ${transactionNo}-thread #${threadNo}`);
+                    }
+                    if (result == -1) {
+                        resolve(-1);
+                    } else {
+                        resolve(0);
                     }
                 })
             );
@@ -198,7 +207,7 @@ async function run() {
     let TOTAL_USERS = TPS;
     let USERS_PER_THREAD = TOTAL_USERS / TOTAL_THREADS;
     let TOKENS_TO_SEND = 1;
-    let MEASURE_FINALISATION = argv.finalization ? argv.finalization : false;
+    let MEASURE_FINALIZATION = argv.finalization ? argv.finalization : false;
     let FINALISATION_TIMEOUT = argv.finalization_timeout ? argv.finalization_timeout : 20000; // 20 seconds
     let FINALISATION_ATTEMPTS = argv.finalization_attempts ? argv.finalization_attempts : 5;
     let ONLY_FLOODING = argv.only_flooding ? argv.only_flooding : false;
@@ -258,7 +267,7 @@ async function run() {
         });
         aliceNonce++;
     }
-    console.log("All users endowed from Alice account!");
+    console.log("All users endowed from the ROOT account!");
 
     console.log("Wait for transactions finalisation");
     await new Promise(r => setTimeout(r, FINALISATION_TIMEOUT));
@@ -286,11 +295,11 @@ async function run() {
             const finalisationTime = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
             const finalisedTxs = new Uint16Array(new SharedArrayBuffer(Uint16Array.BYTES_PER_ELEMENT));
 
-            await executeBatches(initialTime, threadPayloads, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALISATION);
+            await executeBatches(initialTime, threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALIZATION);
             if (ONLY_FLOODING) {
                 return resolve();
             }
-            await collectStats(api, initialTime, MEASURE_FINALISATION, FINALISATION_TIMEOUT, TOTAL_TRANSACTIONS, FINALISATION_ATTEMPTS, finalisedTxs, finalisationTime);
+            await collectStats(api, initialTime, MEASURE_FINALIZATION, FINALISATION_TIMEOUT, TOTAL_TRANSACTIONS, FINALISATION_ATTEMPTS, finalisedTxs, finalisationTime);
             return resolve();
         });
 
