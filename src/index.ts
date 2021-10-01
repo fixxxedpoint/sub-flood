@@ -195,6 +195,52 @@ async function collectStats(
     }
 }
 
+async function retrieveTransactionsCount(initialTime: Date, finalTime: Date, api: ApiPromise): Promise<[number, number]> {
+    let total_transactions = 0;
+    let total_blocks = 0;
+    let latest_block = await getBlockStats(api);
+    while (latest_block.date > initialTime) {
+        try {
+            latest_block = await getBlockStats(api, latest_block.parent);
+        } catch (err) {
+            console.log("Cannot retrieve block info with error: " + err.toString());
+            console.log("Most probably the state is pruned already, stopping");
+            break;
+        }
+        if (latest_block.date < finalTime) {
+            console.log(`block number ${latest_block.blockNumber}: ${latest_block.transactions} transactions`);
+            total_transactions += latest_block.transactions;
+            total_blocks++;
+        }
+    }
+    return new Promise(resolve => resolve([total_transactions, total_blocks]));
+}
+
+async function keepCollectingStats(delay: number, api: ApiPromise) {
+    let initialTime = new Date();
+    let totalDiff = 0;
+    let totalTransactions = 0;
+    let totalBlocks = 0;
+    while(true) {
+        await new Promise(r => setTimeout(r, delay));
+        let finalTime = new Date();
+
+        let [transactions, blocks] = await retrieveTransactionsCount(initialTime, finalTime, api);
+
+        let diff = finalTime.getTime() - initialTime.getTime();
+        let tps = (transactions * 1000) / diff;
+        console.log(`TPS from ${blocks} blocks: ${tps}`);
+
+        totalTransactions += transactions;
+        totalBlocks += blocks;
+        totalDiff += diff;
+        tps = (totalTransactions * 1000) / totalDiff;
+        console.log(`TPS from total ${totalBlocks} blocks: ${tps}`);
+
+        initialTime = finalTime;
+    }
+}
+
 async function run() {
     let argv = require('minimist')(process.argv.slice(2));
 
@@ -212,6 +258,8 @@ async function run() {
     let FINALISATION_ATTEMPTS = argv.finalization_attempts ? argv.finalization_attempts : 5;
     let ONLY_FLOODING = argv.only_flooding ? argv.only_flooding : false;
     let ROOT_ACCOUNT_URI = argv.root_account_uri ? argv.root_account_uri : "//Alice";
+    let KEEP_COLLECTING_STATS = argv.keep_collecting_stats ? argv.keep_collecting_stats : true;
+    let STATS_DELAY = argv.stats_delay ? argv.stats_delay : 40000;
 
     let provider = new WsProvider(WS_URL);
 
@@ -280,6 +328,14 @@ async function run() {
     let payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, aliceKeyPair);
     let submitPromise: Promise<void> = new Promise(resolve => resolve());
 
+    let statsPromise: Promise<void> = new Promise(resolve => resolve());
+    if (KEEP_COLLECTING_STATS) {
+        statsPromise = new Promise(resolve => {
+            keepCollectingStats(STATS_DELAY, api);
+            resolve();
+        });
+    }
+
     while (true) {
 
         console.log(`Pregenerating ${TOTAL_TRANSACTIONS} transactions across ${TOTAL_THREADS} threads...`);
@@ -304,6 +360,7 @@ async function run() {
         });
 
     }
+    await statsPromise;
 }
 
 run().then(function() {
