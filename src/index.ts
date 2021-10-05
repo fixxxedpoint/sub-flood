@@ -34,7 +34,7 @@ function createPayloadBuilder(
     totalBatches: number,
     usersPerThread: number,
     keyPairs: Map<number, KeyringPair>,
-    aliceKeyPair: KeyringPair): () => any[][][] {
+    rootKeyPair: KeyringPair): () => any[][][] {
 
     return function(): any[][][] {
         let threadPayloads: any[][][] = [];
@@ -48,7 +48,7 @@ function createPayloadBuilder(
                     nonces[userNo]++;
                     let senderKeyPair = keyPairs.get(userNo)!;
 
-                    let transfer = api.tx.balances.transfer(aliceKeyPair.address, tokensToSend);
+                    let transfer = api.tx.balances.transfer(rootKeyPair.address, tokensToSend);
                     let signedTransaction = transfer.sign(senderKeyPair, { nonce });
 
                     batch.push(signedTransaction);
@@ -285,18 +285,18 @@ async function run() {
     console.log("All nonces fetched!");
 
     console.log("Endowing all users from ROOT account...");
-    let aliceKeyPair = keyring.addFromUri(ROOT_ACCOUNT_URI);
-    let aliceNonce = (await api.query.system.account(aliceKeyPair.address)).nonce.toNumber();
+    let rootKeyPair = keyring.addFromUri(ROOT_ACCOUNT_URI);
+    let rootNonce = (await api.query.system.account(rootKeyPair.address)).nonce.toNumber();
     let keyPairs = new Map<number, KeyringPair>()
-    console.log("Alice nonce is " + aliceNonce);
+    console.log("ROOT nonce is " + rootNonce);
 
     let finalized_transactions = 0;
 
-    const aliceFunds = (await api.query.system.account(aliceKeyPair.address)).data.free;
-    console.log(`ROOT's funds: ${aliceFunds.toBigInt()}`);
-    const allAvailableAliceFunds = aliceFunds.toBigInt() - api.consts.balances.existentialDeposit.toBigInt();
-    const partialFeeUpperBound = (await api.tx.balances.transfer(aliceKeyPair.address, allAvailableAliceFunds).paymentInfo(aliceKeyPair)).partialFee.toBigInt();
-    const initialBalance = (allAvailableAliceFunds / BigInt(TOTAL_USERS)) - partialFeeUpperBound;
+    const rootFunds = (await api.query.system.account(rootKeyPair.address)).data.free;
+    console.log(`ROOT's funds: ${rootFunds.toBigInt()}`);
+    const allAvailableRootFunds = rootFunds.toBigInt() - api.consts.balances.existentialDeposit.toBigInt();
+    const partialFeeUpperBound = (await api.tx.balances.transfer(rootKeyPair.address, allAvailableRootFunds).paymentInfo(rootKeyPair)).partialFee.toBigInt();
+    const initialBalance = (allAvailableRootFunds / BigInt(TOTAL_USERS)) - partialFeeUpperBound;
 
     for (let seed = 0; seed < TOTAL_USERS; seed++) {
         let keypair = keyring.addFromUri(seedFromNum(seed));
@@ -306,14 +306,14 @@ async function run() {
 
         let receiverSeed = seedFromNum(seed);
         console.log(
-            `Alice -> ${receiverSeed} (${keypair.address}) ${initialBalance}`
+            `ROOT -> ${receiverSeed} (${keypair.address}) ${initialBalance}`
         );
-        await transfer.signAndSend(aliceKeyPair, { nonce: aliceNonce }, ({ status }) => {
+        await transfer.signAndSend(rootKeyPair, { nonce: rootNonce }, ({ status }) => {
             if (status.isFinalized) {
                 finalized_transactions++;
             }
         });
-        aliceNonce++;
+        rootNonce++;
     }
     console.log("All users endowed from the ROOT account!");
 
@@ -325,7 +325,7 @@ async function run() {
         throw Error(`Not all transactions finalized`);
     }
 
-    let payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, aliceKeyPair);
+    let payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
     let submitPromise: Promise<void> = new Promise(resolve => resolve());
 
     let statsPromise: Promise<void> = new Promise(resolve => resolve());
