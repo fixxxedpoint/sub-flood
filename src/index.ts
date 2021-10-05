@@ -258,8 +258,9 @@ async function run() {
     let FINALISATION_ATTEMPTS = argv.finalization_attempts ? argv.finalization_attempts : 5;
     let ONLY_FLOODING = argv.only_flooding ? argv.only_flooding : false;
     let ROOT_ACCOUNT_URI = argv.root_account_uri ? argv.root_account_uri : "//Alice";
-    let KEEP_COLLECTING_STATS = argv.keep_collecting_stats ? argv.keep_collecting_stats : true;
+    let KEEP_COLLECTING_STATS = argv.keep_collecting_stats ? argv.keep_collecting_stats : false;
     let STATS_DELAY = argv.stats_delay ? argv.stats_delay : 40000;
+    let LOOPS_COUNT = argv.loops_count ? argv.loops_count : 1;
 
     let provider = new WsProvider(WS_URL);
 
@@ -336,7 +337,9 @@ async function run() {
         });
     }
 
-    while (true) {
+    let loopsExecuted = 0;
+    while (loopsExecuted < LOOPS_COUNT) {
+        loopsExecuted += 1;
 
         console.log(`Pregenerating ${TOTAL_TRANSACTIONS} transactions across ${TOTAL_THREADS} threads...`);
         let threadPayloads = payloadBuilder();
@@ -360,6 +363,10 @@ async function run() {
         });
 
     }
+    console.log("Awaiting previous batch to finish (disposing)...");
+    await submitPromise;
+    console.log("Previous batch finished (disposed)");
+
     await statsPromise;
 }
 
