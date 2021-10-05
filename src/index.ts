@@ -115,7 +115,6 @@ async function executeBatches(
                             result = -1;
                             return -1;
                         });
-                        console.log(`transaction sent ${transactionNo}-thread #${threadNo}`);
                     }
                     if (result == -1) {
                         resolve(-1);
