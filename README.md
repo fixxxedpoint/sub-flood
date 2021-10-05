@@ -4,6 +4,12 @@ Flooding substrate node with transactions
 To run:
 
 ```
+# This will install nvm (node version manager)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
+# It will install 
+nvm use
+nvm install
+npm install yarn
 # This will generate dist dir which is needed in order for the script to run
 npm run build 
 # If you would like to use this script with a network simulation tool like 
