@@ -91,39 +91,60 @@ async function executeBatches(
         console.log(`Starting batch #${batchNo}`);
         let batchPromises = new Array<Promise<number>>();
         for (let threadNo = 0; threadNo < totalThreads; threadNo++) {
-            batchPromises.push(
-                new Promise<number>(async resolve => {
-                    let result = 0;
-                    for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
+            for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
+                batchPromises.push(
+                    new Promise<number>(async resolve => {
                         let transaction = threadPayloads[threadNo][batchNo][transactionNo];
-                        await transaction.send(({ status }) => {
-                            if (measureFinalisation && status.isFinalized) {
-                                let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
-                                while (true) {
-                                    let stored = Atomics.load(finalisationTime, 0);
-                                    if (finalisationTimeCurrent <= stored) {
-                                        break;
-                                    }
-                                    if (stored == Atomics.compareExchange(finalisationTime, 0, stored, finalisationTimeCurrent)) {
-                                        break;
-                                    }
-                                }
+                        resolve(await transaction.send(({ status }) => {
+                            if (status.isFinalized) {
                                 Atomics.add(finalisedTxs, 0, 1);
+                                let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
+                                if (finalisationTimeCurrent > Atomics.load(finalisationTime, 0)) {
+                                    Atomics.store(finalisationTime, 0, finalisationTimeCurrent);
+                                }
                             }
                         }).catch((err: any) => {
                             errors.push(err);
-                            result = -1;
                             return -1;
-                        });
-                    }
-                    if (result == -1) {
-                        resolve(-1);
-                    } else {
-                        resolve(0);
-                    }
-                })
-            );
+                        }));
+                    })
+                );
+            }
         }
+        // for (let threadNo = 0; threadNo < totalThreads; threadNo++) {
+        //     batchPromises.push(
+        //         new Promise<number>(async resolve => {
+        //             let result = 0;
+        //             for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
+        //                 let transaction = threadPayloads[threadNo][batchNo][transactionNo];
+        //                 await transaction.send(({ status }) => {
+        //                     if (measureFinalisation && status.isFinalized) {
+        //                         let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
+        //                         while (true) {
+        //                             let stored = Atomics.load(finalisationTime, 0);
+        //                             if (finalisationTimeCurrent <= stored) {
+        //                                 break;
+        //                             }
+        //                             if (stored == Atomics.compareExchange(finalisationTime, 0, stored, finalisationTimeCurrent)) {
+        //                                 break;
+        //                             }
+        //                         }
+        //                         Atomics.add(finalisedTxs, 0, 1);
+        //                     }
+        //                 }).catch((err: any) => {
+        //                     errors.push(err);
+        //                     result = -1;
+        //                     return -1;
+        //                 });
+        //             }
+        //             if (result == -1) {
+        //                 resolve(-1);
+        //             } else {
+        //                 resolve(0);
+        //             }
+        //         })
+        //     );
+        // }
         await Promise.all(batchPromises);
 
         if (errors.length > 0) {
