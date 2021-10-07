@@ -76,11 +76,11 @@ async function executeBatches(
     finalisationTime: Uint32Array,
     finalisedTxs: Uint16Array,
     measureFinalisation: boolean,
-    awaitFinalization: boolean
 ) {
     let nextTime = new Date().getTime();
     finalisationTime[0] = 0;
     finalisedTxs[0] = 0;
+    const submittedTxs = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
 
     for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
 
@@ -100,7 +100,8 @@ async function executeBatches(
                     let result = 0;
                     for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
                         let transaction = threadPayloads[threadNo][batchNo][transactionNo];
-                        if (awaitFinalization) {
+                        if (measureFinalisation) {
+                            let thisResult = 0;
                             await transaction.send(({ status }) => {
                                 if (status.isFinalized) {
                                     Atomics.add(finalisedTxs, 0, 1);
@@ -112,14 +113,23 @@ async function executeBatches(
                             }).catch((err: any) => {
                                 errors.push(err);
                                 result = -1;
+                                thisResult = -1;
                                 return -1;
                             });
+                            if (thisResult == 0) {
+                                Atomics.add(submittedTxs, 0, 1);
+                            }
                         } else {
+                            let thisResult = 0;
                             await transaction.send().catch((err: any) => {
                                 errors.push(err);
                                 result = -1;
+                                thisResult = -1;
                                 return -1;
                             });
+                            if (thisResult == 0) {
+                                Atomics.add(submittedTxs, 0, 1);
+                            }
                         }
                     }
                     if (result == -1) {
@@ -136,6 +146,8 @@ async function executeBatches(
             console.log(`${errors.length}/${transactionPerBatch} errors sending transactions`);
         }
     }
+    let submitted = Atomics.load(submittedTxs, 0)
+    console.log(`submitted ${submitted} txn(s)`);
 }
 
 async function collectStats(
@@ -175,6 +187,7 @@ async function collectStats(
 
     let tps = (total_transactions * 1000) / diff;
 
+    console.log(`* # of transactions from ${total_blocks} blocks: ${total_transactions}`);
     console.log(`* TPS from ${total_blocks} blocks: ${tps}`);
 
     if (measureFinalisation && !prunedFlag) {
@@ -359,7 +372,7 @@ async function run() {
             const finalisationTime = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
             const finalisedTxs = new Uint16Array(new SharedArrayBuffer(Uint16Array.BYTES_PER_ELEMENT));
 
-            await executeBatches(initialTime, threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALIZATION, MEASURE_FINALIZATION);
+            await executeBatches(initialTime, threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALIZATION);
             if (ONLY_FLOODING) {
                 return resolve();
             }
