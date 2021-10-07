@@ -6,8 +6,7 @@ To run:
 ```
 # This will install nvm (node version manager)
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
-# It will install 
-nvm use
+# Next, we will install node and yarn
 nvm install
 npm install yarn
 # This will generate dist dir which is needed in order for the script to run
@@ -17,6 +16,10 @@ npm run build
 ln -s "$(pwd)"/dist/index.js /usr/local/bin/sub-flood
 # Run script with
 node dist/index.js
+```
+Example more involved command:
+```
+node --max-old-space-size=4096 dist/index.js --finalization_timeout=20000 --url="ws://localhost:9944" --loops_count=4000000000 --root_account_uri="bla bla bla my secret phrases"
 ```
 
 ## Details of the concept
