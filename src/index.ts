@@ -95,13 +95,13 @@ async function executeBatches(
         console.log(`Starting batch #${batchNo}`);
         let batchPromises = new Array<Promise<number>>();
         for (let threadNo = 0; threadNo < totalThreads; threadNo++) {
-            for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
-                batchPromises.push(
-                    new Promise<number>(async resolve => {
+            batchPromises.push(
+                new Promise<number>(async resolve => {
+                    let result = 0;
+                    for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
                         let transaction = threadPayloads[threadNo][batchNo][transactionNo];
-
                         if (awaitFinalization) {
-                            resolve(await transaction.send(({ status }) => {
+                            await transaction.send(({ status }) => {
                                 if (status.isFinalized) {
                                     Atomics.add(finalisedTxs, 0, 1);
                                     let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
@@ -111,17 +111,24 @@ async function executeBatches(
                                 }
                             }).catch((err: any) => {
                                 errors.push(err);
+                                result = -1;
                                 return -1;
-                            }));
+                            });
                         } else {
-                            resolve(await transaction.send().catch((err: any) => {
+                            await transaction.send().catch((err: any) => {
                                 errors.push(err);
+                                result = -1;
                                 return -1;
-                            }));
+                            });
                         }
-                    })
-                );
-            }
+                    }
+                    if (result == -1) {
+                        resolve(-1);
+                    } else {
+                        resolve(0);
+                    }
+                })
+            );
         }
         await Promise.all(batchPromises);
 
