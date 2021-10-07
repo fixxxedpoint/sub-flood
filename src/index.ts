@@ -34,9 +34,9 @@ function createPayloadBuilder(
     totalBatches: number,
     usersPerThread: number,
     keyPairs: Map<number, KeyringPair>,
-    rootKeyPair: KeyringPair): () => any[][][] {
+    rootKeyPair: KeyringPair): () => Promise<any[][][]> {
 
-    return function(): any[][][] {
+    return async function(): Promise<any[][][]> {
         let threadPayloads: any[][][] = [];
         let sanityCounter = 0;
         for (let thread = 0; thread < totalThreads; thread++) {
@@ -54,6 +54,9 @@ function createPayloadBuilder(
                     batch.push(signedTransaction);
 
                     sanityCounter++;
+
+                    let noop = async function() {};
+                    await noop();
                 }
                 batches.push(batch);
             }
@@ -72,7 +75,8 @@ async function executeBatches(
     transactionPerBatch: number,
     finalisationTime: Uint32Array,
     finalisedTxs: Uint16Array,
-    measureFinalisation: boolean
+    measureFinalisation: boolean,
+    awaitFinalization: boolean
 ) {
     let nextTime = new Date().getTime();
     finalisationTime[0] = 0;
@@ -95,18 +99,26 @@ async function executeBatches(
                 batchPromises.push(
                     new Promise<number>(async resolve => {
                         let transaction = threadPayloads[threadNo][batchNo][transactionNo];
-                        resolve(await transaction.send(({ status }) => {
-                            if (status.isFinalized) {
-                                Atomics.add(finalisedTxs, 0, 1);
-                                let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
-                                if (finalisationTimeCurrent > Atomics.load(finalisationTime, 0)) {
-                                    Atomics.store(finalisationTime, 0, finalisationTimeCurrent);
+
+                        if (awaitFinalization) {
+                            resolve(await transaction.send(({ status }) => {
+                                if (status.isFinalized) {
+                                    Atomics.add(finalisedTxs, 0, 1);
+                                    let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
+                                    if (finalisationTimeCurrent > Atomics.load(finalisationTime, 0)) {
+                                        Atomics.store(finalisationTime, 0, finalisationTimeCurrent);
+                                    }
                                 }
-                            }
-                        }).catch((err: any) => {
-                            errors.push(err);
-                            return -1;
-                        }));
+                            }).catch((err: any) => {
+                                errors.push(err);
+                                return -1;
+                            }));
+                        } else {
+                            resolve(await transaction.send().catch((err: any) => {
+                                errors.push(err);
+                                return -1;
+                            }));
+                        }
                     })
                 );
             }
@@ -156,7 +168,7 @@ async function collectStats(
 
     let tps = (total_transactions * 1000) / diff;
 
-    console.log(`TPS from ${total_blocks} blocks: ${tps}`);
+    console.log(`* TPS from ${total_blocks} blocks: ${tps}`);
 
     if (measureFinalisation && !prunedFlag) {
         let attempt = 0;
@@ -328,7 +340,7 @@ async function run() {
         loopsExecuted += 1;
 
         console.log(`Pregenerating ${TOTAL_TRANSACTIONS} transactions across ${TOTAL_THREADS} threads...`);
-        let threadPayloads = payloadBuilder();
+        let threadPayloads = await payloadBuilder();
 
         // wait for the previous batch before you start a new one
         console.log("Awaiting previous batch to finish...");
@@ -340,7 +352,7 @@ async function run() {
             const finalisationTime = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
             const finalisedTxs = new Uint16Array(new SharedArrayBuffer(Uint16Array.BYTES_PER_ELEMENT));
 
-            await executeBatches(initialTime, threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALIZATION);
+            await executeBatches(initialTime, threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALIZATION, MEASURE_FINALIZATION);
             if (ONLY_FLOODING) {
                 return resolve();
             }
