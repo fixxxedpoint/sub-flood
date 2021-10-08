@@ -313,6 +313,11 @@ async function run() {
     console.log("ROOT nonce is " + rootNonce);
     let keyPairs = new Map<number, KeyringPair>()
 
+    for (let seed = 0; seed < TOTAL_USERS; seed++) {
+        let keypair = keyring.addFromUri(seedFromNum(seed));
+        keyPairs.set(seed, keypair);
+    }
+
     if (!nonZeroBalance) {
         console.log("Endowing all users from ROOT account...");
 
@@ -325,8 +330,7 @@ async function run() {
         const initialBalance = (allAvailableRootFunds / BigInt(TOTAL_USERS)) - partialFeeUpperBound;
 
         for (let seed = 0; seed < TOTAL_USERS; seed++) {
-            let keypair = keyring.addFromUri(seedFromNum(seed));
-            keyPairs.set(seed, keypair);
+            let keypair = keyPairs.get(seed);
 
             let transfer = api.tx.balances.transfer(keypair.address, initialBalance);
 
