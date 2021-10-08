@@ -2,8 +2,6 @@ import { Keyring } from "@polkadot/keyring";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { KeyringPair } from "@polkadot/keyring/types";
 import { BlockHash } from "@polkadot/types/interfaces";
-import { BN } from "@polkadot/types";
-
 
 function seedFromNum(seed: number): string {
     return '//user//' + ("0000" + seed).slice(-4);
@@ -91,14 +89,12 @@ async function executeBatches(
 
         nextTime = nextTime + 1000;
 
-        let errors = [];
-
         console.log(`Starting batch #${batchNo}`);
-        let batchPromises = new Array<Promise<number>>();
+        let batchPromises = new Array<Promise<any[]>>();
         for (let threadNo = 0; threadNo < totalThreads; threadNo++) {
             batchPromises.push(
-                new Promise<number>(async resolve => {
-                    let result = 0;
+                new Promise<any[]>(async resolve => {
+                    let errors = [];
                     for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
                         let transaction = threadPayloads[threadNo][batchNo][transactionNo];
                         if (measureFinalisation) {
@@ -113,9 +109,7 @@ async function executeBatches(
                                 }
                             }).catch((err: any) => {
                                 errors.push(err);
-                                result = -1;
                                 thisResult = -1;
-                                return -1;
                             });
                             if (thisResult == 0) {
                                 Atomics.add(submittedTxs, 0, 1);
@@ -124,27 +118,22 @@ async function executeBatches(
                             let thisResult = 0;
                             await transaction.send().catch((err: any) => {
                                 errors.push(err);
-                                result = -1;
                                 thisResult = -1;
-                                return -1;
                             });
                             if (thisResult == 0) {
                                 Atomics.add(submittedTxs, 0, 1);
                             }
                         }
                     }
-                    if (result == -1) {
-                        resolve(-1);
-                    } else {
-                        resolve(0);
-                    }
+                    resolve(errors);
                 })
             );
         }
-        await Promise.all(batchPromises);
+        let allErrors = await Promise.all(batchPromises);
+        let errors = allErrors.reduce((res, val) => res.concat(val), []);
 
         if (errors.length > 0) {
-            console.log(`${errors.length}/${transactionPerBatch} errors sending transactions`);
+            console.log(`${errors.length}/${transactionPerBatch * totalThreads} errors sending transactions`);
         }
     }
     let submitted = Atomics.load(submittedTxs, 0)
