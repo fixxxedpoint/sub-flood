@@ -77,10 +77,9 @@ async function executeBatches(
     finalisedTxs: Uint16Array,
     measureFinalisation: boolean,
 ) {
-    let nextTime = new Date().getTime();
+        let nextTime = new Date().getTime();
     finalisationTime[0] = 0;
     finalisedTxs[0] = 0;
-    const submittedTxs = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
 
     for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
 
@@ -95,14 +94,13 @@ async function executeBatches(
         console.log(`Starting batch #${batchNo}`);
         let batchPromises = new Array<Promise<number>>();
         for (let threadNo = 0; threadNo < totalThreads; threadNo++) {
-            batchPromises.push(
-                new Promise<number>(async resolve => {
-                    let result = 0;
-                    for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
+            for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
+                batchPromises.push(
+                    new Promise<number>(async resolve => {
                         let transaction = threadPayloads[threadNo][batchNo][transactionNo];
+
                         if (measureFinalisation) {
-                            let thisResult = 0;
-                            await transaction.send(({ status }) => {
+                            resolve(await transaction.send(({ status }) => {
                                 if (status.isFinalized) {
                                     Atomics.add(finalisedTxs, 0, 1);
                                     let finalisationTimeCurrent = new Date().getTime() - initialTime.getTime();
@@ -112,33 +110,17 @@ async function executeBatches(
                                 }
                             }).catch((err: any) => {
                                 errors.push(err);
-                                result = -1;
-                                thisResult = -1;
                                 return -1;
-                            });
-                            if (thisResult == 0) {
-                                Atomics.add(submittedTxs, 0, 1);
-                            }
+                            }));
                         } else {
-                            let thisResult = 0;
-                            await transaction.send().catch((err: any) => {
+                            resolve(await transaction.send().catch((err: any) => {
                                 errors.push(err);
-                                result = -1;
-                                thisResult = -1;
                                 return -1;
-                            });
-                            if (thisResult == 0) {
-                                Atomics.add(submittedTxs, 0, 1);
-                            }
+                            }));
                         }
-                    }
-                    if (result == -1) {
-                        resolve(-1);
-                    } else {
-                        resolve(0);
-                    }
-                })
-            );
+                    })
+                );
+            }
         }
         await Promise.all(batchPromises);
 
@@ -146,8 +128,6 @@ async function executeBatches(
             console.log(`${errors.length}/${transactionPerBatch} errors sending transactions`);
         }
     }
-    let submitted = Atomics.load(submittedTxs, 0)
-    console.log(`submitted ${submitted} txn(s)`);
 }
 
 async function collectStats(
