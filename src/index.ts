@@ -2,6 +2,7 @@ import { Keyring } from "@polkadot/keyring";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import { KeyringPair } from "@polkadot/keyring/types";
 import { BlockHash } from "@polkadot/types/interfaces";
+import { BN } from "@polkadot/types";
 
 
 function seedFromNum(seed: number): string {
@@ -301,7 +302,7 @@ async function run() {
         let keys = keyring.addFromUri(stringSeed);
         let accountInfo = await api.query.system.account(keys.address);
         let nonce = accountInfo.nonce.toNumber();
-        if (accountInfo.data) {
+        if (!accountInfo.data.free.isZero()) {
             nonZeroBalance = true;
         }
         nonces.push(nonce)
