@@ -295,53 +295,61 @@ async function run() {
     let nonces = [];
 
     console.log("Fetching nonces for accounts...");
+    let nonZeroBalance = false;
     for (let i = 0; i < TOTAL_USERS; i++) {
         let stringSeed = seedFromNum(i);
         let keys = keyring.addFromUri(stringSeed);
-        let nonce = (await api.query.system.account(keys.address)).nonce.toNumber();
+        let accountInfo = await api.query.system.account(keys.address);
+        let nonce = accountInfo.nonce.toNumber();
+        if (accountInfo.data) {
+            nonZeroBalance = true;
+        }
         nonces.push(nonce)
     }
     console.log("All nonces fetched!");
 
-    console.log("Endowing all users from ROOT account...");
     let rootKeyPair = keyring.addFromUri(ROOT_ACCOUNT_URI);
     let rootNonce = (await api.query.system.account(rootKeyPair.address)).nonce.toNumber();
-    let keyPairs = new Map<number, KeyringPair>()
     console.log("ROOT nonce is " + rootNonce);
+    let keyPairs = new Map<number, KeyringPair>()
 
-    let finalized_transactions = 0;
+    if (!nonZeroBalance) {
+        console.log("Endowing all users from ROOT account...");
 
-    const rootFunds = (await api.query.system.account(rootKeyPair.address)).data.free;
-    console.log(`ROOT's funds: ${rootFunds.toBigInt()}`);
-    const allAvailableRootFunds = rootFunds.toBigInt() - api.consts.balances.existentialDeposit.toBigInt();
-    const partialFeeUpperBound = (await api.tx.balances.transfer(rootKeyPair.address, allAvailableRootFunds).paymentInfo(rootKeyPair)).partialFee.toBigInt();
-    const initialBalance = (allAvailableRootFunds / BigInt(TOTAL_USERS)) - partialFeeUpperBound;
+        let finalized_transactions = 0;
 
-    for (let seed = 0; seed < TOTAL_USERS; seed++) {
-        let keypair = keyring.addFromUri(seedFromNum(seed));
-        keyPairs.set(seed, keypair);
+        const rootFunds = (await api.query.system.account(rootKeyPair.address)).data.free;
+        console.log(`ROOT's funds: ${rootFunds.toBigInt()}`);
+        const allAvailableRootFunds = rootFunds.toBigInt() - api.consts.balances.existentialDeposit.toBigInt();
+        const partialFeeUpperBound = (await api.tx.balances.transfer(rootKeyPair.address, allAvailableRootFunds).paymentInfo(rootKeyPair)).partialFee.toBigInt();
+        const initialBalance = (allAvailableRootFunds / BigInt(TOTAL_USERS)) - partialFeeUpperBound;
 
-        let transfer = api.tx.balances.transfer(keypair.address, initialBalance);
+        for (let seed = 0; seed < TOTAL_USERS; seed++) {
+            let keypair = keyring.addFromUri(seedFromNum(seed));
+            keyPairs.set(seed, keypair);
 
-        let receiverSeed = seedFromNum(seed);
-        console.log(
-            `ROOT -> ${receiverSeed} (${keypair.address}) ${initialBalance}`
-        );
-        await transfer.signAndSend(rootKeyPair, { nonce: rootNonce }, ({ status }) => {
-            if (status.isFinalized) {
-                finalized_transactions++;
-            }
-        });
-        rootNonce++;
-    }
-    console.log("All users endowed from the ROOT account!");
+            let transfer = api.tx.balances.transfer(keypair.address, initialBalance);
 
-    console.log("Wait for transactions finalisation");
-    await new Promise(r => setTimeout(r, FINALISATION_TIMEOUT));
-    console.log(`Finalized transactions ${finalized_transactions}`);
+            let receiverSeed = seedFromNum(seed);
+            console.log(
+                `ROOT -> ${receiverSeed} (${keypair.address}) ${initialBalance}`
+            );
+            await transfer.signAndSend(rootKeyPair, { nonce: rootNonce }, ({ status }) => {
+                if (status.isFinalized) {
+                    finalized_transactions++;
+                }
+            });
+            rootNonce++;
+        }
+        console.log("All users endowed from the ROOT account!");
 
-    if (finalized_transactions != TOTAL_USERS) {
-        throw Error(`Not all transactions finalized`);
+        console.log("Wait for transactions finalisation");
+        await new Promise(r => setTimeout(r, FINALISATION_TIMEOUT));
+        console.log(`Finalized transactions ${finalized_transactions}`);
+
+        if (finalized_transactions != TOTAL_USERS) {
+            throw Error(`Not all transactions finalized`);
+        }
     }
 
     let payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
