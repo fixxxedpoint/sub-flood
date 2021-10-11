@@ -347,6 +347,7 @@ async function run() {
     }
 
     let payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
+    let nextPayload = payloadBuilder();
     let submitPromise: Promise<void> = new Promise(resolve => resolve());
 
     let statsPromise: Promise<void> = new Promise(resolve => resolve());
@@ -362,7 +363,8 @@ async function run() {
         loopsExecuted += 1;
 
         console.log(`Pregenerating ${TOTAL_TRANSACTIONS} transactions across ${TOTAL_THREADS} threads...`);
-        let threadPayloads = await payloadBuilder();
+        let threadPayloads = await nextPayload;
+        nextPayload = payloadBuilder();
 
         // wait for the previous batch before you start a new one
         console.log("Awaiting previous batch to finish...");
