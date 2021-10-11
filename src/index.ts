@@ -43,6 +43,8 @@ function createPayloadBuilder(
             for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
                 let batch = [];
                 for (let userNo = thread * usersPerThread; userNo < (thread + 1) * usersPerThread; userNo++) {
+                    await (new Promise(async resolve => { resolve(0); }))
+
                     let nonce = nonces[userNo];
                     nonces[userNo]++;
                     let senderKeyPair = keyPairs.get(userNo)!;
@@ -53,8 +55,6 @@ function createPayloadBuilder(
                     batch.push(signedTransaction);
 
                     sanityCounter++;
-
-                    await (new Promise(async resolve => {resolve(0);}))
                 }
                 batches.push(batch);
             }
