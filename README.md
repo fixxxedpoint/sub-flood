@@ -19,7 +19,7 @@ node dist/index.js
 ```
 Example more involved command:
 ```
-node --max-old-space-size=4096 dist/index.js --finalization_timeout=20000 --url="ws://localhost:9944" --loops_count=4000000000 --root_account_uri="bla bla bla my secret phrases"
+node --max-old-space-size=4096 dist/index.js --finalization_timeout=20000 --url="ws://localhost:9944" --loops_count=400000 --scale=200 --total_threads=20 --total_transactions=5000 --only_flooding=true --keep_collecting_stats=true --root_account_uri="bla bla bla my secret phrases"
 ```
 
 ## Details of the concept
