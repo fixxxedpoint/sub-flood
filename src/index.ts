@@ -54,8 +54,7 @@ function createPayloadBuilder(
 
                     sanityCounter++;
 
-                    let noop = async function() {};
-                    await noop();
+                    await (new Promise(async resolve => {resolve(0);}))
                 }
                 batches.push(batch);
             }
