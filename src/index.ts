@@ -366,23 +366,20 @@ async function run() {
         let threadPayloads = await nextPayload;
         nextPayload = payloadBuilder();
 
-        // wait for the previous batch before you start a new one
-        console.log("Awaiting previous batch to finish...");
-        await submitPromise;
-        console.log("Previous batch finished");
-
-        submitPromise = new Promise(async resolve => {
+        console.log("Awaiting for a batch to finish...");
+        await (new Promise(async _ => {
             let initialTime = new Date();
             const finalisationTime = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
             const finalisedTxs = new Uint16Array(new SharedArrayBuffer(Uint16Array.BYTES_PER_ELEMENT));
 
             await executeBatches(initialTime, threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALIZATION);
             if (ONLY_FLOODING) {
-                return resolve();
+                return;
             }
             await collectStats(api, initialTime, MEASURE_FINALIZATION, FINALISATION_TIMEOUT, TOTAL_TRANSACTIONS, FINALISATION_ATTEMPTS, finalisedTxs, finalisationTime);
-            return resolve();
-        });
+            return;
+        }));
+        console.log("A batch finished");
 
     }
     console.log("Awaiting previous batch to finish (disposing)...");
