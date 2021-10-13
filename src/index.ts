@@ -94,10 +94,6 @@ async function executeBatches(
 
     for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
 
-        while (new Date().getTime() < nextTime) {
-            await new Promise(r => setTimeout(r, 5));
-        }
-
         nextTime = nextTime + 1000;
 
         console.log(`Starting batch #${batchNo}`);
@@ -146,6 +142,11 @@ async function executeBatches(
         if (errors.length > 0) {
             console.log(`${errors.length}/${transactionPerBatch * totalThreads} errors sending transactions`);
         }
+
+        while (new Date().getTime() < nextTime) {
+            await new Promise(r => setTimeout(r, 5));
+        }
+
     }
     let submitted = Atomics.load(submittedTxs, 0)
     console.log(`submitted ${submitted} txn(s)`);
