@@ -25,6 +25,15 @@ async function getBlockStats(api: ApiPromise, hash?: BlockHash | undefined): Pro
     }
 }
 
+function createTransaction(api: ApiPromise, nonces: number[], userNo: number, keyPairs: Map<number, KeyringPair>, rootKeyPair: KeyringPair, tokensToSend: number): any {
+    let nonce = nonces[userNo];
+    nonces[userNo]++;
+    let senderKeyPair = keyPairs.get(userNo)!;
+
+    let transfer = api.tx.balances.transfer(rootKeyPair.address, tokensToSend);
+    return transfer.sign(senderKeyPair, { nonce });
+}
+
 function createPayloadBuilder(
     api: ApiPromise,
     tokensToSend: number,
@@ -33,10 +42,9 @@ function createPayloadBuilder(
     totalBatches: number,
     usersPerThread: number,
     keyPairs: Map<number, KeyringPair>,
-    rootKeyPair: KeyringPair): () => Promise<any[][][]> {
+    rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<any[][][]> {
 
-    return async function(): Promise<any[][][]> {
-        let threadPayloads: any[][][] = [];
+    return async function(threadPayloads: any[][][]): Promise<any[][][]> {
         let sanityCounter = 0;
         for (let thread = 0; thread < totalThreads; thread++) {
             let batches = [];
@@ -45,12 +53,7 @@ function createPayloadBuilder(
                 for (let userNo = thread * usersPerThread; userNo < (thread + 1) * usersPerThread; userNo++) {
                     await (new Promise(async resolve => { resolve(0); }))
 
-                    let nonce = nonces[userNo];
-                    nonces[userNo]++;
-                    let senderKeyPair = keyPairs.get(userNo)!;
-
-                    let transfer = api.tx.balances.transfer(rootKeyPair.address, tokensToSend);
-                    let signedTransaction = transfer.sign(senderKeyPair, { nonce });
+                    let signedTransaction = createTransaction(api, nonces, userNo, keyPairs, rootKeyPair, tokensToSend);
 
                     batch.push(signedTransaction);
 
@@ -65,6 +68,14 @@ function createPayloadBuilder(
     };
 }
 
+function getTransaction(txBuilder: (usernNo: number) => any, threadPayloads: any[][][], thread: number, batch: number, creator: number): any {
+    let transaction = threadPayloads[thread][batch][creator];
+    if (transaction === undefined) {
+        return txBuilder(creator);
+    }
+    return transaction;
+}
+
 async function executeBatches(
     initialTime: Date,
     threadPayloads: any[][][],
@@ -74,6 +85,7 @@ async function executeBatches(
     finalisationTime: Uint32Array,
     finalisedTxs: Uint16Array,
     measureFinalisation: boolean,
+    creator: (userNo: number) => any,
 ) {
     let nextTime = new Date().getTime();
     finalisationTime[0] = 0;
@@ -95,7 +107,7 @@ async function executeBatches(
                 new Promise<any[]>(async resolve => {
                     let errors = [];
                     for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
-                        let transaction = threadPayloads[threadNo][batchNo][transactionNo];
+                        let transaction = getTransaction(creator, threadPayloads, threadNo, batchNo, transactionNo);
                         if (measureFinalisation) {
                             let thisResult = 0;
                             await transaction.send(({ status }) => {
@@ -268,6 +280,7 @@ async function run() {
     let KEEP_COLLECTING_STATS = argv.keep_collecting_stats ? argv.keep_collecting_stats : false;
     let STATS_DELAY = argv.stats_delay ? argv.stats_delay : 40000;
     let LOOPS_COUNT = argv.loops_count ? argv.loops_count : 1;
+    let ADHOC_CREATION = argv.adhoc ? true : false;
 
     let provider = new WsProvider(WS_URL);
 
@@ -345,8 +358,13 @@ async function run() {
         }
     }
 
-    let payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
-    let nextPayload = payloadBuilder();
+    let threadPayloads: any[][][] = [];
+    let nextThreadPayloads: any[][][] = [];
+    let payloadBuilder = (threadPayloads: any[][][]) => { return new Promise<any[][][]>(r => r(threadPayloads)); };
+    if (!ADHOC_CREATION) {
+        payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
+    }
+    let nextPayload = payloadBuilder(nextThreadPayloads);
     let submitPromise: Promise<void> = new Promise(resolve => resolve());
 
     let statsPromise: Promise<void> = new Promise(resolve => resolve());
@@ -362,8 +380,9 @@ async function run() {
         loopsExecuted += 1;
 
         console.log(`Pregenerating ${TOTAL_TRANSACTIONS} transactions across ${TOTAL_THREADS} threads...`);
-        let threadPayloads = await nextPayload;
-        nextPayload = payloadBuilder();
+        nextThreadPayloads = threadPayloads;
+        threadPayloads = await nextPayload;
+        nextPayload = payloadBuilder(nextThreadPayloads);
 
         console.log("Awaiting for a batch to finish...");
         await (new Promise(async resolve => {
@@ -371,7 +390,10 @@ async function run() {
             const finalisationTime = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
             const finalisedTxs = new Uint16Array(new SharedArrayBuffer(Uint16Array.BYTES_PER_ELEMENT));
 
-            await executeBatches(initialTime, threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALIZATION);
+            let creatorFn = (userNo: number) => {
+                return createTransaction(api, nonces, userNo, keyPairs, rootKeyPair, TOKENS_TO_SEND);
+            };
+            await executeBatches(initialTime, threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALIZATION, creatorFn);
             if (ONLY_FLOODING) {
                 resolve(0);
                 return;
