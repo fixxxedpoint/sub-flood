@@ -282,6 +282,7 @@ async function run() {
     let STATS_DELAY = argv.stats_delay ? argv.stats_delay : 40000;
     let LOOPS_COUNT = argv.loops_count ? argv.loops_count : 1;
     let ADHOC_CREATION = argv.adhoc ? true : false;
+    let STARTING_ACCOUNT = argv.starting_account ? argv.starting_account : 0;
 
     let provider = new WsProvider(WS_URL);
 
@@ -300,7 +301,7 @@ async function run() {
     console.log("Fetching nonces for accounts...");
     let nonZeroBalance = false;
     for (let i = 0; i < TOTAL_USERS; i++) {
-        let stringSeed = seedFromNum(i);
+        let stringSeed = seedFromNum(i + STARTING_ACCOUNT);
         let keys = keyring.addFromUri(stringSeed);
         let accountInfo = await api.query.system.account(keys.address);
         let nonce = accountInfo.nonce.toNumber();
@@ -317,7 +318,7 @@ async function run() {
     let keyPairs = new Map<number, KeyringPair>()
 
     for (let seed = 0; seed < TOTAL_USERS; seed++) {
-        let keypair = keyring.addFromUri(seedFromNum(seed));
+        let keypair = keyring.addFromUri(seedFromNum(seed + STARTING_ACCOUNT));
         keyPairs.set(seed, keypair);
     }
 
