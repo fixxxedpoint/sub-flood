@@ -45,6 +45,9 @@ function createPayloadBuilder(
     rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<any[][][]> {
 
     return async function(threadPayloads: any[][][]): Promise<any[][][]> {
+        if (threadPayloads === undefined) {
+            threadPayloads = [];
+        }
         let sanityCounter = 0;
         for (let thread = 0; thread < totalThreads; thread++) {
             let batches = [];
@@ -69,11 +72,10 @@ function createPayloadBuilder(
 }
 
 function getTransaction(txBuilder: (usernNo: number) => any, threadPayloads: any[][][], thread: number, batch: number, creator: number): any {
-    let transaction = threadPayloads[thread][batch][creator];
-    if (transaction === undefined) {
+    if (threadPayloads === undefined) {
         return txBuilder(creator);
     }
-    return transaction;
+    return threadPayloads[thread][batch][creator];
 }
 
 async function executeBatches(
@@ -360,8 +362,8 @@ async function run() {
         }
     }
 
-    let threadPayloads: any[][][] = [];
-    let nextThreadPayloads: any[][][] = [];
+    let threadPayloads: any[][][] = undefined;
+    let nextThreadPayloads: any[][][] = undefined;
     let payloadBuilder = (threadPayloads: any[][][]) => { return new Promise<any[][][]>(r => r(threadPayloads)); };
     if (!ADHOC_CREATION) {
         payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
