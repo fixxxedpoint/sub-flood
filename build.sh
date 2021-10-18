@@ -1,7 +1,11 @@
 #!/bin/bash
 
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash # install node version manager
-exec bash # reloads bash after we installed nvm
-nvm install # install dependencies
-npm install yarn # install yarn
-npm run build # build project
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.37.2/install.sh | bash # install node version manager
+
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+
+nvm install
+nvm use
+npm install yarn
+npm run build
