@@ -66,9 +66,7 @@ function createPayloadBuilder(
                 for (let userNo = thread * usersPerThread; userNo < (thread + 1) * usersPerThread; userNo++) {
                     await (new Promise(async resolve => { resolve(0); }))
 
-                    console.log(nonces[userNo])
                     let signedTransaction = createTransaction(api, nonces, userNo, keyPairs, rootKeyPair, tokensToSend);
-                    console.log(`after ${nonces[userNo]}`)
 
                     batch[ix] = signedTransaction;
                     ix++;
