@@ -382,8 +382,8 @@ async function run() {
 
     let statsPromise: Promise<void> = new Promise(resolve => resolve());
     if (KEEP_COLLECTING_STATS) {
-        statsPromise = new Promise(resolve => {
-            keepCollectingStats(STATS_DELAY, api);
+        statsPromise = new Promise(async resolve => {
+            await keepCollectingStats(STATS_DELAY, api);
             resolve();
         });
     }
