@@ -47,27 +47,38 @@ function createPayloadBuilder(
     return async function(threadPayloads: any[][][]): Promise<any[][][]> {
         if (threadPayloads === undefined) {
             threadPayloads = [];
+            let signedTransaction = createTransaction(api, nonces, 0, keyPairs, rootKeyPair, tokensToSend);
+            for (let thread = 0; thread < totalThreads; thread++) {
+                let batches = [];
+                for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
+                    let batch = [...new Array(usersPerThread)].map((_0, _1) => signedTransaction);
+                    batches.push(batch);
+                }
+                threadPayloads.push(batches);
+            }
         }
         let sanityCounter = 0;
         for (let thread = 0; thread < totalThreads; thread++) {
-            let batches = [];
+            let batches = threadPayloads[thread];
             for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
-                let batch = [];
+                let batch = batches[batchNo];
+                let ix = 0;
                 for (let userNo = thread * usersPerThread; userNo < (thread + 1) * usersPerThread; userNo++) {
                     await (new Promise(async resolve => { resolve(0); }))
 
+                    console.log(nonces[userNo])
                     let signedTransaction = createTransaction(api, nonces, userNo, keyPairs, rootKeyPair, tokensToSend);
+                    console.log(`after ${nonces[userNo]}`)
 
-                    batch.push(signedTransaction);
+                    batch[ix] = signedTransaction;
+                    ix++;
 
                     sanityCounter++;
                 }
-                batches.push(batch);
             }
-            threadPayloads.push(batches);
         }
         console.log(`Done pregenerating transactions (${sanityCounter}).`);
-        return threadPayloads;
+        return new Promise<any[][][]>(r => r(threadPayloads));
     };
 }
 
