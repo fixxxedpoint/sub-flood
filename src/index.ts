@@ -151,7 +151,7 @@ async function executeBatches(
         let errors = allErrors.reduce((res, val) => res.concat(val), []);
 
         if (errors.length > 0) {
-            console.log(`${errors.length}/${transactionPerBatch * totalThreads} errors sending transactions`);
+            console.error(`${errors.length}/${transactionPerBatch * totalThreads} errors sending transactions`);
         }
 
         while (new Date().getTime() < nextTime) {
@@ -275,7 +275,7 @@ async function keepCollectingStats(delay: number, api: ApiPromise) {
 async function run() {
     let argv = require('minimist')(process.argv.slice(2));
 
-    let TOTAL_TRANSACTIONS = argv.total_transactions ? argv.total_transactions : 25000;
+    let TOTAL_TRANSACTIONS = argv.total_transactions >= 0 ? argv.total_transactions : 25000;
     let TPS = argv.scale ? argv.scale : 100;
     let TOTAL_THREADS = argv.total_threads ? argv.total_threads : 10;
     let TOTAL_BATCHES = TOTAL_TRANSACTIONS / TPS;
@@ -291,7 +291,7 @@ async function run() {
     let ROOT_ACCOUNT_URI = argv.root_account_uri ? argv.root_account_uri : "//Alice";
     let KEEP_COLLECTING_STATS = argv.keep_collecting_stats ? argv.keep_collecting_stats : false;
     let STATS_DELAY = argv.stats_delay ? argv.stats_delay : 40000;
-    let LOOPS_COUNT = argv.loops_count ? argv.loops_count : 1;
+    let LOOPS_COUNT = argv.loops_count >= 0 ? argv.loops_count : 1;
     let ADHOC_CREATION = argv.adhoc ? true : false;
     let STARTING_ACCOUNT = argv.starting_account ? argv.starting_account : 0;
 
