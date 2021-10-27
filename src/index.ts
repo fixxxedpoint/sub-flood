@@ -46,6 +46,7 @@ function acceleratedParamsMapper(iterations: number): (counter: number, threads:
 
 function createAcceleratingPayloadBuilder(
     iterations: number,
+    initialValue: number,
     api: ApiPromise,
     tokensToSend: number,
     nonces: number[],
@@ -55,7 +56,7 @@ function createAcceleratingPayloadBuilder(
     keyPairs: Map<number, KeyringPair>,
     rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<any[][][]> {
 
-    let counter = 0;
+    let counter = initialValue;
     let mapParams = acceleratedParamsMapper(iterations);
     return async function(threadPayloads: any[][][]): Promise<any[][][]> {
         if (threadPayloads === undefined) {
@@ -347,6 +348,7 @@ async function run() {
     let ADHOC_CREATION = argv.adhoc ? true : false;
     let STARTING_ACCOUNT = argv.starting_account ? argv.starting_account : 0;
     let PEDAL_TO_THE_METAL = argv.accelerate > 0 ? argv.accelerate : 0;
+    let INITIAL_SPEED = argv.initial_speed > 0 ? argv.initial_speed : 0;
 
     let provider = new WsProvider(WS_URL);
 
@@ -432,7 +434,7 @@ async function run() {
     }
     if (PEDAL_TO_THE_METAL > 0) {
         // TODO I know it might overwrite other things but I am tired of it
-        payloadBuilder = createAcceleratingPayloadBuilder(PEDAL_TO_THE_METAL, api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
+        payloadBuilder = createAcceleratingPayloadBuilder(PEDAL_TO_THE_METAL, INITIAL_SPEED, api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
     }
     let nextPayload = payloadBuilder(nextThreadPayloads);
     let submitPromise: Promise<void> = new Promise(resolve => resolve());
