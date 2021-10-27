@@ -45,7 +45,7 @@ function acceleratedParamsMapper(iterations: number): (counter: number, threads:
 }
 
 function createAcceleratingPayloadBuilder(
-    mapParams: (counter: number, threads: number, batches: number, users: number) => [number, number, number],
+    iterations: number,
     api: ApiPromise,
     tokensToSend: number,
     nonces: number[],
@@ -56,6 +56,7 @@ function createAcceleratingPayloadBuilder(
     rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<any[][][]> {
 
     let counter = 0;
+    let mapParams = acceleratedParamsMapper(iterations);
     return async function(threadPayloads: any[][][]): Promise<any[][][]> {
         if (threadPayloads === undefined) {
             threadPayloads = [];
@@ -71,6 +72,7 @@ function createAcceleratingPayloadBuilder(
         }
 
         counter += 1;
+        console.log(`Started iteration ${counter}`);
         let [threads, batches, users] = mapParams(counter, totalThreads, totalBatches, usersPerThread);
         return await createPayloadBuilder(api, tokensToSend, nonces, threads, batches, users, keyPairs, rootKeyPair)(threadPayloads);
     }
@@ -430,7 +432,7 @@ async function run() {
     }
     if (PEDAL_TO_THE_METAL > 0) {
         // TODO I know it might overwrite other things but I am tired of it
-        payloadBuilder = createAcceleratingPayloadBuilder(acceleratedParamsMapper(PEDAL_TO_THE_METAL), api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
+        payloadBuilder = createAcceleratingPayloadBuilder(PEDAL_TO_THE_METAL, api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
     }
     let nextPayload = payloadBuilder(nextThreadPayloads);
     let submitPromise: Promise<void> = new Promise(resolve => resolve());
