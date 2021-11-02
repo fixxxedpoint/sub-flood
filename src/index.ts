@@ -36,7 +36,6 @@ function createTransaction(api: ApiPromise, nonces: number[], userNo: number, ke
 
 function acceleratedParamsMapper(iterations: number): (counter: number, threads: number, batches: number, users: number) => [number, number, number] {
     return function(counter: number, threads: number, batches: number, users: number): [number, number, number] {
-        console.log(`${threads} ${batches} ${users} ${users * counter / iterations}`);
         if (counter > iterations) {
             return [threads, batches, users];
         } else {
