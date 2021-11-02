@@ -45,7 +45,7 @@ function acceleratedParamsMapper(iterations: number): (counter: number, threads:
 }
 
 function createAcceleratingPayloadBuilder(
-    iterations: number,
+    mapParams: (counter: number, threads: number, batches: number, users: number) => [number, number, number],
     initialValue: number,
     api: ApiPromise,
     tokensToSend: number,
@@ -54,12 +54,11 @@ function createAcceleratingPayloadBuilder(
     totalBatches: number,
     usersPerThread: number,
     keyPairs: Map<number, KeyringPair>,
-    rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<any[][][]> {
+    rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<[any[][][], number, number, number]> {
 
     let counter = initialValue;
-    let mapParams = acceleratedParamsMapper(iterations);
-    return async function(threadPayloads: any[][][]): Promise<any[][][]> {
-        if (threadPayloads === undefined) {
+    return async function(threadPayloads: any[][][]): Promise<[any[][][], number, number, number]> {
+        if (counter == initialValue && threadPayloads === undefined) {
             threadPayloads = [];
             let signedTransaction = createTransaction(api, nonces, 0, keyPairs, rootKeyPair, tokensToSend);
             for (let thread = 0; thread < totalThreads; thread++) {
@@ -87,9 +86,9 @@ function createPayloadBuilder(
     totalBatches: number,
     usersPerThread: number,
     keyPairs: Map<number, KeyringPair>,
-    rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<any[][][]> {
+    rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<[ any[][][], number, number, number ]> {
 
-    return async function(threadPayloads: any[][][]): Promise<any[][][]> {
+    return async function(threadPayloads: any[][][]): Promise<[ any[][][], number, number, number ]> {
         if (threadPayloads === undefined) {
             threadPayloads = [];
             let signedTransaction = createTransaction(api, nonces, 0, keyPairs, rootKeyPair, tokensToSend);
@@ -121,7 +120,7 @@ function createPayloadBuilder(
             }
         }
         console.log(`Done pregenerating transactions (${sanityCounter}).`);
-        return new Promise<any[][][]>(r => r(threadPayloads));
+        return new Promise<[any[][][], number, number, number]>(r => r([ threadPayloads, totalThreads, totalBatches, usersPerThread ]));
     };
 }
 
@@ -332,7 +331,6 @@ async function run() {
     let TPS = argv.scale ? argv.scale : 100;
     let TOTAL_THREADS = argv.total_threads ? argv.total_threads : 10;
     let TOTAL_BATCHES = TOTAL_TRANSACTIONS / TPS;
-    let TRANSACTION_PER_BATCH = TPS / TOTAL_THREADS;
     let WS_URL = argv.url ? argv.url : "ws://localhost:9944";
     let TOTAL_USERS = TPS;
     let USERS_PER_THREAD = TOTAL_USERS / TOTAL_THREADS;
@@ -348,7 +346,7 @@ async function run() {
     let ADHOC_CREATION = argv.adhoc ? true : false;
     let STARTING_ACCOUNT = argv.starting_account ? argv.starting_account : 0;
     let PEDAL_TO_THE_METAL = argv.accelerate > 0 ? argv.accelerate : 0;
-    let INITIAL_SPEED = argv.initial_speed > 0 ? argv.initial_speed : 0;
+    let INITIAL_SPEED = argv.initial_speed > 0 ? argv.initial_speed : 1;
 
     let provider = new WsProvider(WS_URL);
 
@@ -427,14 +425,20 @@ async function run() {
     }
 
     let threadPayloads: any[][][] = undefined;
+    let threads: number;
+    let batches: number;
+    let txsPerBatch: number;
     let nextThreadPayloads: any[][][] = undefined;
-    let payloadBuilder = (threadPayloads: any[][][]) => { return new Promise<any[][][]>(r => r(threadPayloads)); };
+    let payloadBuilder: (threadPayloads: any[][][]) => Promise<[any[][][], number, number, number]> = (threadPayloads: any[][][]) => { return new Promise<[ any[][][], number, number, number ]>(r => r([threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD])); };
     if (!ADHOC_CREATION) {
         payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
     }
+    let paramsMapper: (counter: number, threads: number, batches: number, users: number) => [number, number, number];
+    paramsMapper = function(counter: number, threads: number, batches: number, users: number): [number, number, number] { return [threads, batches, users]; };
     if (PEDAL_TO_THE_METAL > 0) {
         // TODO I know it might overwrite other things but I am tired of it
-        payloadBuilder = createAcceleratingPayloadBuilder(PEDAL_TO_THE_METAL, INITIAL_SPEED, api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
+        paramsMapper = acceleratedParamsMapper(PEDAL_TO_THE_METAL);
+        payloadBuilder = createAcceleratingPayloadBuilder(paramsMapper, INITIAL_SPEED,  api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
     }
     let nextPayload = payloadBuilder(nextThreadPayloads);
     let submitPromise: Promise<void> = new Promise(resolve => resolve());
@@ -453,7 +457,7 @@ async function run() {
 
         console.log(`Pregenerating ${TOTAL_TRANSACTIONS} transactions across ${TOTAL_THREADS} threads...`);
         nextThreadPayloads = threadPayloads;
-        threadPayloads = await nextPayload;
+        [ threadPayloads, threads, batches, txsPerBatch ] = await nextPayload;
         nextPayload = payloadBuilder(nextThreadPayloads);
 
         console.log("Awaiting for a batch to finish...");
@@ -465,7 +469,7 @@ async function run() {
             let creatorFn = (userNo: number) => {
                 return createTransaction(api, nonces, userNo, keyPairs, rootKeyPair, TOKENS_TO_SEND);
             };
-            await executeBatches(initialTime, threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, TRANSACTION_PER_BATCH, finalisationTime, finalisedTxs, MEASURE_FINALIZATION, creatorFn);
+            await executeBatches(initialTime, threadPayloads, threads, batches, txsPerBatch, finalisationTime, finalisedTxs, MEASURE_FINALIZATION, creatorFn);
             if (ONLY_FLOODING) {
                 resolve(0);
                 return;
