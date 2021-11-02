@@ -36,6 +36,7 @@ function createTransaction(api: ApiPromise, nonces: number[], userNo: number, ke
 
 function acceleratedParamsMapper(iterations: number): (counter: number, threads: number, batches: number, users: number) => [number, number, number] {
     return function(counter: number, threads: number, batches: number, users: number): [number, number, number] {
+        console.log(`${threads} ${batches} ${users} ${users * counter / iterations}`);
         if (counter > iterations) {
             return [threads, batches, users];
         } else {
@@ -52,29 +53,30 @@ function createAcceleratingPayloadBuilder(
     nonces: number[],
     totalThreads: number,
     totalBatches: number,
-    usersPerThread: number,
+    txsPerBatch: number,
     keyPairs: Map<number, KeyringPair>,
     rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<[any[][][], number, number, number]> {
 
     let counter = initialValue;
     return async function(threadPayloads: any[][][]): Promise<[any[][][], number, number, number]> {
         if (counter == initialValue && threadPayloads === undefined) {
+            let tmpNonces = Array<number>(nonces.length).fill(0);
             threadPayloads = [];
-            let signedTransaction = createTransaction(api, nonces, 0, keyPairs, rootKeyPair, tokensToSend);
+            let signedTransaction = createTransaction(api, tmpNonces, 0, keyPairs, rootKeyPair, tokensToSend);
             for (let thread = 0; thread < totalThreads; thread++) {
                 let batches = [];
                 for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
-                    let batch = [...new Array(usersPerThread)].map((_0, _1) => signedTransaction);
+                    let batch = [...new Array(txsPerBatch)].map((_0, _1) => signedTransaction);
                     batches.push(batch);
                 }
                 threadPayloads.push(batches);
             }
         }
 
-        counter += 1;
         console.log(`Started iteration ${counter}`);
-        let [threads, batches, users] = mapParams(counter, totalThreads, totalBatches, usersPerThread);
-        return await createPayloadBuilder(api, tokensToSend, nonces, threads, batches, users, keyPairs, rootKeyPair)(threadPayloads);
+        let [threads, batches, txsInBatch] = mapParams(counter, totalThreads, totalBatches, txsPerBatch);
+        counter += 1;
+        return await createPayloadBuilder(api, tokensToSend, nonces, threads, batches, txsInBatch, keyPairs, rootKeyPair)(threadPayloads);
     }
 }
 
@@ -90,8 +92,9 @@ function createPayloadBuilder(
 
     return async function(threadPayloads: any[][][]): Promise<[ any[][][], number, number, number ]> {
         if (threadPayloads === undefined) {
+            let tmpNonces = Array<number>(nonces.length).fill(0);
             threadPayloads = [];
-            let signedTransaction = createTransaction(api, nonces, 0, keyPairs, rootKeyPair, tokensToSend);
+            let signedTransaction = createTransaction(api, tmpNonces, 0, keyPairs, rootKeyPair, tokensToSend);
             for (let thread = 0; thread < totalThreads; thread++) {
                 let batches = [];
                 for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
@@ -146,6 +149,7 @@ async function executeBatches(
     finalisationTime[0] = 0;
     finalisedTxs[0] = 0;
     const submittedTxs = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
+    const sentTxs = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
 
     for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
 
@@ -173,6 +177,7 @@ async function executeBatches(
                                 errors.push(err);
                                 thisResult = -1;
                             });
+                            Atomics.add(sentTxs, 0, 1)
                             if (thisResult == 0) {
                                 Atomics.add(submittedTxs, 0, 1);
                             }
@@ -182,6 +187,7 @@ async function executeBatches(
                                 errors.push(err);
                                 thisResult = -1;
                             });
+                            Atomics.add(sentTxs, 0, 1)
                             if (thisResult == 0) {
                                 Atomics.add(submittedTxs, 0, 1);
                             }
@@ -203,8 +209,9 @@ async function executeBatches(
         }
 
     }
-    let submitted = Atomics.load(submittedTxs, 0)
-    console.log(`submitted ${submitted} txn(s)`);
+    let submitted = Atomics.load(submittedTxs, 0);
+    let sent = Atomics.load(sentTxs, 0);
+    console.log(`submitted ${submitted} txn(s) out of ${sent} sent`);
 }
 
 async function collectStats(
