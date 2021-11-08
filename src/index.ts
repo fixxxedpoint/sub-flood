@@ -133,6 +133,8 @@ function getTransaction(txBuilder: (usernNo: number) => any, threadPayloads: any
     return threadPayloads[thread][batch][creator];
 }
 
+const allSubmittedTxs = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
+
 async function executeBatches(
     initialTime: Date,
     threadPayloads: any[][][],
@@ -179,6 +181,7 @@ async function executeBatches(
                             Atomics.add(sentTxs, 0, 1)
                             if (thisResult == 0) {
                                 Atomics.add(submittedTxs, 0, 1);
+                                Atomics.add(allSubmittedTxs, 0, 1);
                             }
                         } else {
                             let thisResult = 0;
@@ -189,6 +192,7 @@ async function executeBatches(
                             Atomics.add(sentTxs, 0, 1)
                             if (thisResult == 0) {
                                 Atomics.add(submittedTxs, 0, 1);
+                                Atomics.add(allSubmittedTxs, 0, 1);
                             }
                         }
                     }
@@ -209,8 +213,10 @@ async function executeBatches(
 
     }
     let submitted = Atomics.load(submittedTxs, 0);
+    let allSubmitted = Atomics.load(allSubmittedTxs, 0);
     let sent = Atomics.load(sentTxs, 0);
     console.log(`submitted ${submitted} txn(s) out of ${sent} sent`);
+    console.log(`total submitted txs: ${allSubmitted}`);
 }
 
 async function collectStats(
