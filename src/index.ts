@@ -39,7 +39,7 @@ function acceleratedParamsMapper(iterations: number): (counter: number, threads:
         if (counter > iterations) {
             return [threads, batches, users];
         } else {
-            return [threads, batches, users * counter / iterations];
+            return [threads, batches, Math.ceil(users * counter / iterations)];
         }
     }
 }
