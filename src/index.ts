@@ -25,83 +25,74 @@ async function getBlockStats(api: ApiPromise, hash?: BlockHash | undefined): Pro
     }
 }
 
-function createTransaction(api: ApiPromise, nonces: number[], userNo: number, keyPairs: Map<number, KeyringPair>, rootKeyPair: KeyringPair, tokensToSend: number): any {
-    let nonce = nonces[userNo];
-    nonces[userNo]++;
-    let senderKeyPair = keyPairs.get(userNo)!;
+function transactionBuilder(api: ApiPromise, nonces: number[], keyPairs: Map<number, KeyringPair>, rootKeyPair: KeyringPair, tokensToSend: number): (userNo: number) => any {
+    return (userNo: number) => {
+        let nonce = nonces[userNo];
+        nonces[userNo]++;
+        let senderKeyPair = keyPairs.get(userNo)!;
 
-    let transfer = api.tx.balances.transfer(rootKeyPair.address, tokensToSend);
-    return transfer.sign(senderKeyPair, { nonce });
+        let transfer = api.tx.balances.transfer(rootKeyPair.address, tokensToSend);
+        return transfer.sign(senderKeyPair, { nonce });
+    }
 }
 
-function acceleratedParamsMapper(iterations: number): (counter: number, threads: number, batches: number, users: number) => [number, number, number] {
-    return function(counter: number, threads: number, batches: number, users: number): [number, number, number] {
-        if (counter > iterations) {
+function incrementalParamsMapper(iterationsLimit: number, threads: number, batches: number, users: number): (iteration: number) => [number, number, number] {
+    return function(iteration: number): [number, number, number] {
+        if (iteration > iterationsLimit) {
             return [threads, batches, users];
         } else {
-            return [threads, batches, Math.ceil(users * counter / iterations)];
+            return [threads, batches, Math.ceil(users * iteration / iterationsLimit)];
         }
     }
 }
 
-function createAcceleratingPayloadBuilder(
-    mapParams: (counter: number, threads: number, batches: number, users: number) => [number, number, number],
+function initializePayload(totalThreads: number, totalBatches: number, txsPerBatch: number, templateTransaction: any): any[][][] {
+    let threadPayloads = [];
+    for (let thread = 0; thread < totalThreads; thread++) {
+        let batches = [];
+        for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
+            let batch = [...new Array(txsPerBatch)].map((_0, _1) => templateTransaction);
+            batches.push(batch);
+        }
+        threadPayloads.push(batches);
+    }
+    return threadPayloads;
+}
+
+function createIncrementalPayloadBuilder(
+    mapParams: (iteration: number) => [number, number, number],
     initialValue: number,
-    api: ApiPromise,
-    tokensToSend: number,
-    nonces: number[],
     totalThreads: number,
     totalBatches: number,
     txsPerBatch: number,
-    keyPairs: Map<number, KeyringPair>,
-    rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<[any[][][], number, number, number]> {
+    createTransaction: (userNo: number) => any):
+(threadPayloads: any[][][]) => Promise<[any[][][], number, number, number]> {
 
-    let counter = initialValue;
+    let iteration = initialValue;
     return async function(threadPayloads: any[][][]): Promise<[any[][][], number, number, number]> {
-        if (counter == initialValue && threadPayloads === undefined) {
-            let tmpNonces = Array<number>(nonces.length).fill(0);
-            threadPayloads = [];
-            let signedTransaction = createTransaction(api, tmpNonces, 0, keyPairs, rootKeyPair, tokensToSend);
-            for (let thread = 0; thread < totalThreads; thread++) {
-                let batches = [];
-                for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
-                    let batch = [...new Array(txsPerBatch)].map((_0, _1) => signedTransaction);
-                    batches.push(batch);
-                }
-                threadPayloads.push(batches);
-            }
+        if (iteration == initialValue && threadPayloads === undefined) {
+            let signedTransaction = createTransaction(0);
+            threadPayloads = initializePayload(totalThreads, totalBatches, txsPerBatch, signedTransaction);
         }
 
-        console.log(`Started iteration ${counter}`);
-        let [threads, batches, txsInBatch] = mapParams(counter, totalThreads, totalBatches, txsPerBatch);
-        counter += 1;
-        return await createPayloadBuilder(api, tokensToSend, nonces, threads, batches, txsInBatch, keyPairs, rootKeyPair)(threadPayloads);
+        console.log(`Started iteration ${iteration}`);
+        let [threads, batches, txsInBatch] = mapParams(iteration);
+        iteration += 1;
+        return await createPayloadBuilder(threads, batches, txsInBatch, createTransaction)(threadPayloads);
     }
 }
 
 function createPayloadBuilder(
-    api: ApiPromise,
-    tokensToSend: number,
-    nonces: number[],
     totalThreads: number,
     totalBatches: number,
     usersPerThread: number,
-    keyPairs: Map<number, KeyringPair>,
-    rootKeyPair: KeyringPair): (threadPayloads: any[][][]) => Promise<[ any[][][], number, number, number ]> {
+    createTransaction: (userNo: number) => any
+): (threadPayloads: any[][][]) => Promise<[ any[][][], number, number, number ]> {
 
     return async function(threadPayloads: any[][][]): Promise<[ any[][][], number, number, number ]> {
         if (threadPayloads === undefined) {
-            let tmpNonces = Array<number>(nonces.length).fill(0);
-            threadPayloads = [];
-            let signedTransaction = createTransaction(api, tmpNonces, 0, keyPairs, rootKeyPair, tokensToSend);
-            for (let thread = 0; thread < totalThreads; thread++) {
-                let batches = [];
-                for (let batchNo = 0; batchNo < totalBatches; batchNo++) {
-                    let batch = [...new Array(usersPerThread)].map((_0, _1) => signedTransaction);
-                    batches.push(batch);
-                }
-                threadPayloads.push(batches);
-            }
+            let signedTransaction = createTransaction(0);
+            threadPayloads = initializePayload(totalThreads, totalBatches, usersPerThread, signedTransaction);
         }
         let sanityCounter = 0;
         for (let thread = 0; thread < totalThreads; thread++) {
@@ -112,7 +103,7 @@ function createPayloadBuilder(
                 for (let userNo = thread * usersPerThread; userNo < (thread + 1) * usersPerThread; userNo++) {
                     await (new Promise(async resolve => { resolve(0); }))
 
-                    let signedTransaction = createTransaction(api, nonces, userNo, keyPairs, rootKeyPair, tokensToSend);
+                    let signedTransaction = createTransaction(userNo);
 
                     batch[ix] = signedTransaction;
                     ix++;
@@ -126,7 +117,7 @@ function createPayloadBuilder(
     };
 }
 
-function getTransaction(txBuilder: (usernNo: number) => any, threadPayloads: any[][][], thread: number, batch: number, creator: number): any {
+function getOrCreateTransaction(txBuilder: (usernNo: number) => any, threadPayloads: any[][][], thread: number, batch: number, creator: number): any {
     if (threadPayloads === undefined) {
         return txBuilder(creator);
     }
@@ -163,7 +154,7 @@ async function executeBatches(
                 new Promise<any[]>(async resolve => {
                     let errors = [];
                     for (let transactionNo = 0; transactionNo < transactionPerBatch; transactionNo++) {
-                        let transaction = getTransaction(creator, threadPayloads, threadNo, batchNo, transactionNo);
+                        let transaction = getOrCreateTransaction(creator, threadPayloads, threadNo, batchNo, transactionNo);
                         if (measureFinalisation) {
                             let thisResult = 0;
                             await transaction.send(({ status }) => {
@@ -232,32 +223,32 @@ async function collectStats(
     let finalTime = new Date();
     let diff = finalTime.getTime() - initialTime.getTime();
 
-    let total_transactions = 0;
-    let total_blocks = 0;
-    let latest_block = await getBlockStats(api);
-    console.log(`latest block: ${latest_block.date}`);
+    let includedTransactions = 0;
+    let totalBlocks = 0;
+    let latestBlock = await getBlockStats(api);
+    console.log(`latest block: ${latestBlock.date}`);
     console.log(`initial time: ${initialTime}`);
     let prunedFlag = false;
-    while (latest_block.date > initialTime) {
+    while (latestBlock.date > initialTime) {
         try {
-            latest_block = await getBlockStats(api, latest_block.parent);
+            latestBlock = await getBlockStats(api, latestBlock.parent);
         } catch (err) {
             console.log("Cannot retrieve block info with error: " + err.toString());
             console.log("Most probably the state is pruned already, stopping");
             prunedFlag = true;
             break;
         }
-        if (latest_block.date < finalTime) {
-            console.log(`block number ${latest_block.blockNumber}: ${latest_block.transactions} transactions`);
-            total_transactions += latest_block.transactions;
-            total_blocks++;
+        if (latestBlock.date < finalTime) {
+            console.log(`block number ${latestBlock.blockNumber}: ${latestBlock.transactions} transactions`);
+            includedTransactions += latestBlock.transactions;
+            totalBlocks++;
         }
     }
 
-    let tps = (total_transactions * 1000) / diff;
+    let tps = (includedTransactions * 1000) / diff;
 
-    console.log(`* # of transactions from ${total_blocks} blocks: ${total_transactions}`);
-    console.log(`* TPS from ${total_blocks} blocks: ${tps}`);
+    console.log(`* # of transactions from ${totalBlocks} blocks: ${includedTransactions}`);
+    console.log(`* TPS from ${totalBlocks} blocks: ${tps}`);
 
     if (measureFinalisation && !prunedFlag) {
         let attempt = 0;
@@ -283,32 +274,32 @@ async function collectStats(
 }
 
 async function retrieveTransactionsCount(initialTime: Date, finalTime: Date, api: ApiPromise): Promise<[number, number, Date, Date]> {
-    let total_transactions = 0;
-    let total_blocks = 0;
-    let latest_block = await getBlockStats(api);
-    let last_block_time = finalTime;
-    let last_block_time_initialized = false;
-    let first_block_time = initialTime;
-    while (latest_block.date > initialTime) {
-        first_block_time = latest_block.date;
+    let totalTransactions = 0;
+    let totalBlocks = 0;
+    let latestBlock = await getBlockStats(api);
+    let lastBlockTime = finalTime;
+    let lastBlockTimeInitialized = false;
+    let firstBlockTime = initialTime;
+    while (latestBlock.date > initialTime) {
+        firstBlockTime = latestBlock.date;
         try {
-            latest_block = await getBlockStats(api, latest_block.parent);
+            latestBlock = await getBlockStats(api, latestBlock.parent);
         } catch (err) {
             console.log("Cannot retrieve block info with error: " + err.toString());
             console.log("Most probably the state is pruned already, stopping");
             break;
         }
-        if (latest_block.date < finalTime) {
-            console.log(`block number ${latest_block.blockNumber}: ${latest_block.transactions} transactions`);
-            total_transactions += latest_block.transactions;
-            total_blocks++;
-            if (!last_block_time_initialized) {
-                last_block_time = latest_block.date;
-                last_block_time_initialized = true;
+        if (latestBlock.date < finalTime) {
+            console.log(`block number ${latestBlock.blockNumber}: ${latestBlock.transactions} transactions`);
+            totalTransactions += latestBlock.transactions;
+            totalBlocks++;
+            if (!lastBlockTimeInitialized) {
+                lastBlockTime = latestBlock.date;
+                lastBlockTimeInitialized = true;
             }
         }
     }
-    return new Promise(resolve => resolve([total_transactions, total_blocks, first_block_time, last_block_time]));
+    return new Promise(resolve => resolve([totalTransactions, totalBlocks, firstBlockTime, lastBlockTime]));
 }
 
 async function keepCollectingStats(delay: number, api: ApiPromise) {
@@ -401,7 +392,7 @@ async function run() {
     if (!nonZeroBalance) {
         console.log("Endowing all users from ROOT account...");
 
-        let finalized_transactions = 0;
+        let finalizedTransactions = 0;
 
         const rootFunds = (await api.query.system.account(rootKeyPair.address)).data.free;
         console.log(`ROOT's funds: ${rootFunds.toBigInt()}`);
@@ -420,7 +411,7 @@ async function run() {
             );
             await transfer.signAndSend(rootKeyPair, { nonce: rootNonce }, ({ status }) => {
                 if (status.isFinalized) {
-                    finalized_transactions++;
+                    finalizedTransactions++;
                 }
             });
             rootNonce++;
@@ -429,9 +420,9 @@ async function run() {
 
         console.log("Wait for transactions finalisation");
         await new Promise(r => setTimeout(r, FINALISATION_TIMEOUT));
-        console.log(`Finalized transactions ${finalized_transactions}`);
+        console.log(`Finalized transactions ${finalizedTransactions}`);
 
-        if (finalized_transactions != TOTAL_USERS) {
+        if (finalizedTransactions != TOTAL_USERS) {
             throw Error(`Not all transactions finalized`);
         }
     }
@@ -441,16 +432,16 @@ async function run() {
     let batches: number;
     let txsPerBatch: number;
     let nextThreadPayloads: any[][][] = undefined;
+    let createTransactionFn = transactionBuilder(api, nonces, keyPairs, rootKeyPair, TOKENS_TO_SEND);
     let payloadBuilder: (threadPayloads: any[][][]) => Promise<[any[][][], number, number, number]> = (threadPayloads: any[][][]) => { return new Promise<[ any[][][], number, number, number ]>(r => r([threadPayloads, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD])); };
     if (!ADHOC_CREATION) {
-        payloadBuilder = createPayloadBuilder(api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
+        payloadBuilder = createPayloadBuilder(TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, createTransactionFn);
     }
-    let paramsMapper: (counter: number, threads: number, batches: number, users: number) => [number, number, number];
-    paramsMapper = function(counter: number, threads: number, batches: number, users: number): [number, number, number] { return [threads, batches, users]; };
+    let paramsMapper: (counter: number) => [number, number, number];
+    paramsMapper = function(_: number): [number, number, number] { return [threads, batches, txsPerBatch]; };
     if (PEDAL_TO_THE_METAL > 0) {
-        // TODO I know it might overwrite other things but I am tired of it
-        paramsMapper = acceleratedParamsMapper(PEDAL_TO_THE_METAL);
-        payloadBuilder = createAcceleratingPayloadBuilder(paramsMapper, INITIAL_SPEED,  api, TOKENS_TO_SEND, nonces, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, keyPairs, rootKeyPair);
+        paramsMapper = incrementalParamsMapper(PEDAL_TO_THE_METAL, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD);
+        payloadBuilder = createIncrementalPayloadBuilder(paramsMapper, INITIAL_SPEED, TOTAL_THREADS, TOTAL_BATCHES, USERS_PER_THREAD, createTransactionFn);
     }
     let nextPayload = payloadBuilder(nextThreadPayloads);
     let submitPromise: Promise<void> = new Promise(resolve => resolve());
@@ -478,10 +469,7 @@ async function run() {
             const finalisationTime = new Uint32Array(new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT));
             const finalisedTxs = new Uint16Array(new SharedArrayBuffer(Uint16Array.BYTES_PER_ELEMENT));
 
-            let creatorFn = (userNo: number) => {
-                return createTransaction(api, nonces, userNo, keyPairs, rootKeyPair, TOKENS_TO_SEND);
-            };
-            await executeBatches(initialTime, threadPayloads, threads, batches, txsPerBatch, finalisationTime, finalisedTxs, MEASURE_FINALIZATION, creatorFn);
+            await executeBatches(initialTime, threadPayloads, threads, batches, txsPerBatch, finalisationTime, finalisedTxs, MEASURE_FINALIZATION, createTransactionFn);
             if (ONLY_FLOODING) {
                 resolve(0);
                 return;
